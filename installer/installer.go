@@ -32,20 +32,9 @@ type UInstaller interface {
 	EnableUpdatedPartition() error
 }
 
-func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
+func Install(art io.ReadCloser, dt string, key []byte,
+	scrDir, modulesDir, modulesWorkDir string,
 	device UInstaller, acceptStateScripts bool) error {
-
-	rootfs := handlers.NewRootfsInstaller()
-
-	rootfs.InstallHandler = func(r io.Reader, df *handlers.DataFile) error {
-		log.Debugf("installing update %v of size %v", df.Name, df.Size)
-		err := device.InstallUpdate(ioutil.NopCloser(r), df.Size)
-		if err != nil {
-			log.Errorf("update image installation failed: %v", err)
-			return err
-		}
-		return nil
-	}
 
 	var ar *areader.Reader
 	// if there is a verification key artifact must be signed
@@ -56,8 +45,11 @@ func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
 		log.Info("no public key was provided for authenticating the artifact")
 	}
 
-	if err := ar.RegisterHandler(rootfs); err != nil {
-		return errors.Wrap(err, "failed to register install handler")
+	// Important for the client to forbid artifacts types we don't know.
+	ar.ForbidUnknownHandlers = true
+
+	if err := registerHandlers(ar, device); err != nil {
+		return err
 	}
 
 	ar.CompatibleDevicesCallback = func(devices []string) error {
@@ -132,6 +124,35 @@ func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
 	log.Debugf(
 		"installer: successfully read artifact [name: %v; version: %v; compatible devices: %v]",
 		ar.GetArtifactName(), ar.GetInfo().Version, ar.GetCompatibleDevices())
+
+	return nil
+}
+
+func registerHandlers(ar *areader.Reader, device UInstaller) error {
+	rootfs := handlers.NewRootfsInstaller()
+
+	rootfs.InstallHandler = func(r io.Reader, df *handlers.DataFile) error {
+		log.Debugf("installing update %v of size %v", df.Name, df.Size)
+		err := device.InstallUpdate(ioutil.NopCloser(r), df.Size)
+		if err != nil {
+			log.Errorf("update image installation failed: %v", err)
+			return err
+		}
+		return nil
+	}
+
+	if err := ar.RegisterHandler(rootfs); err != nil {
+		return errors.Wrap(err, "failed to register rootfs install handler")
+	}
+
+	updateTypes := []string{"test-type"}
+	for _, updateType := range updateTypes {
+		module := NewModuleInstaller(updateType)
+		if err := ar.RegisterHandler(module); err != nil {
+			return errors.Wrapf(err, "failed to register '%s' install handler",
+				updateType)
+		}
+	}
 
 	return nil
 }

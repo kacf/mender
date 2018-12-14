@@ -76,6 +76,8 @@ var (
 	defaultDataStore         = getStateDirPath()
 	defaultArtScriptsPath    = path.Join(getStateDirPath(), "scripts")
 	defaultRootfsScriptsPath = path.Join(getConfDirPath(), "scripts")
+	defaultModulesPath       = path.Join(getDataDirPath(), "modules")
+	defaultModulesWorkPath   = path.Join(getStateDirPath(), "modules")
 
 	errNoArtifactName = errors.New("cannot determine current artifact name")
 )
@@ -231,6 +233,8 @@ type mender struct {
 	state               State
 	stateScriptExecutor statescript.Executor
 	stateScriptPath     string
+	modulesPath         string
+	modulesWorkPath     string
 	config              menderConfig
 	artifactInfoFile    string
 	deviceTypeFile      string
@@ -275,6 +279,8 @@ func NewMender(config menderConfig, pieces MenderPieces) (*mender, error) {
 		authToken:              noAuthToken,
 		stateScriptExecutor:    stateScrExec,
 		stateScriptPath:        defaultArtScriptsPath,
+		modulesPath:            defaultModulesPath,
+		modulesWorkPath:        defaultModulesWorkPath,
 	}
 
 	if m.authMgr != nil {
@@ -851,6 +857,12 @@ func (m *mender) InstallUpdate(from io.ReadCloser, size int64) error {
 	if err != nil {
 		log.Errorf("Unable to verify the existing hardware. Update will continue anyways: %v : %v", defaultDeviceTypeFile, err)
 	}
-	return installer.Install(from, deviceType,
-		m.GetArtifactVerifyKey(), m.stateScriptPath, m.UInstallCommitRebooter, true)
+	return installer.Install(from,
+		deviceType,
+		m.GetArtifactVerifyKey(),
+		m.stateScriptPath,
+		m.modulesPath,
+		m.modulesWorkPath,
+		m.UInstallCommitRebooter,
+		true)
 }

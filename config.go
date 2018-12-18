@@ -184,8 +184,8 @@ func (c menderConfig) GetHttpConfig() client.Config {
 	}
 }
 
-func (c menderConfig) GetDeviceConfig() deviceConfig {
-	return deviceConfig{
+func (c menderConfig) GetDeviceConfig() dualRootfsDeviceConfig {
+	return dualRootfsDeviceConfig{
 		rootfsPartA: c.RootfsPartA,
 		rootfsPartB: c.RootfsPartB,
 	}

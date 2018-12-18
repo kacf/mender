@@ -28,7 +28,7 @@ import (
 )
 
 // This will be run manually from command line ONLY
-func doRootfs(device installer.UInstaller, args runOptionsType, dt string,
+func doRootfs(dualRootfsDevice installer.UInstaller, args runOptionsType, dt string,
 	vKey []byte, config *menderConfig) error {
 	var image io.ReadCloser
 	var imageSize int64
@@ -37,6 +37,10 @@ func doRootfs(device installer.UInstaller, args runOptionsType, dt string,
 
 	if args == (runOptionsType{}) {
 		return errors.New("rootfs called without needed parameters")
+	}
+
+	if dualRootfsDevice == nil {
+		return errors.New("No dual rootfs configuration present")
 	}
 
 	log.Debug("Starting device update.")
@@ -79,13 +83,13 @@ func doRootfs(device installer.UInstaller, args runOptionsType, dt string,
 	tr := io.TeeReader(image, p)
 
 	err = installer.Install(ioutil.NopCloser(tr), dt, vKey, "", config.ModulesPath,
-		config.ModulesWorkPath, device, *args.runStateScripts)
+		config.ModulesWorkPath, dualRootfsDevice, *args.runStateScripts)
 	if err != nil {
 		log.Errorf("Installation failed: %s", err.Error())
 		return err
 	}
 
-	err = device.InstallUpdate()
+	err = dualRootfsDevice.InstallUpdate()
 	if err != nil {
 		log.Errorf("Enabling updated partition failed: %s", err.Error())
 		return err

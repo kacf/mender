@@ -221,7 +221,6 @@ func (m *MenderState) UnmarshalJSON(data []byte) error {
 }
 
 type mender struct {
-	UInstallCommitRebooter
 	updater             client.Updater
 	state               State
 	stateScriptExecutor statescript.Executor
@@ -237,7 +236,6 @@ type mender struct {
 }
 
 type MenderPieces struct {
-	device  UInstallCommitRebooter
 	store   store.Store
 	authMgr AuthManager
 }
@@ -258,7 +256,6 @@ func NewMender(config menderConfig, pieces MenderPieces) (*mender, error) {
 	}
 
 	m := &mender{
-		UInstallCommitRebooter: pieces.device,
 		updater:                client.NewUpdate(),
 		artifactInfoFile:       defaultArtifactInfoFile,
 		deviceTypeFile:         defaultDeviceTypeFile,

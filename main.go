@@ -438,20 +438,24 @@ func doMain(args []string) error {
 	}
 
 	env := NewEnvironment(new(osCalls))
-	device := NewDevice(env, new(osCalls), config.GetDeviceConfig())
-	ap, err := device.GetActive()
-	if err != nil {
-		log.Errorf("Failed to read the current active partition: %s", err.Error())
+	dualRootfsDevice := NewDualRootfsDevice(env, new(osCalls), config.GetDeviceConfig())
+	if dualRootfsDevice == nil {
+		log.Info("No dual rootfs configuration present")
 	} else {
-		log.Infof("Mender running on partition: %s", ap)
+		ap, err := dualRootfsDevice.GetActive()
+		if err != nil {
+			log.Errorf("Failed to read the current active partition: %s", err.Error())
+		} else {
+			log.Infof("Mender running on partition: %s", ap)
+		}
 	}
 
 	DeploymentLogger = NewDeploymentLogManager(*runOptions.dataStore)
 
-	return handleCLIOptions(runOptions, env, device, config)
+	return handleCLIOptions(runOptions, env, dualRootfsDevice, config)
 }
 
-func handleCLIOptions(runOptions runOptionsType, env *uBootEnv, device *device, config *menderConfig) error {
+func handleCLIOptions(runOptions runOptionsType, env *uBootEnv, dualRootfsDevice *dualRootfsDevice, config *menderConfig) error {
 
 	switch {
 
@@ -467,10 +471,13 @@ func handleCLIOptions(runOptions runOptionsType, env *uBootEnv, device *device, 
 			log.Errorf("Unable to verify the existing hardware. Update will continue anyways: %v : %v", defaultDeviceTypeFile, err)
 		}
 		vKey := config.GetVerificationKey()
-		return doRootfs(device, runOptions, dt, vKey, config)
+		return doRootfs(dualRootfsDevice, runOptions, dt, vKey, config)
 
 	case *runOptions.commit:
-		return device.CommitUpdate()
+		if dualRootfsDevice == nil {
+			return errors.New("No dual rootfs configuration present")
+		}
+		return dualRootfsDevice.CommitUpdate()
 	case *runOptions.bootstrap:
 		return doBootstrapAuthorize(config, &runOptions)
 

@@ -25,22 +25,28 @@ import (
 	"github.com/pkg/errors"
 )
 
-type deviceConfig struct {
+type dualRootfsDeviceConfig struct {
 	rootfsPartA string
 	rootfsPartB string
 }
 
-type device struct {
+type dualRootfsDevice struct {
 	BootEnvReadWriter
 	Commander
 	*partitions
+	rebooter *systemRebooter
 }
 
 var (
 	errorNoUpgradeMounted = errors.New("There is nothing to commit")
 )
 
-func NewDevice(env BootEnvReadWriter, sc StatCommander, config deviceConfig) *device {
+// Returns nil if config doesn't contain partition paths.
+func NewDualRootfsDevice(env BootEnvReadWriter, sc StatCommander, config dualRootfsDeviceConfig) *dualRootfsDevice {
+	if config.rootfsPartA == "" || config.rootfsPartB == "" {
+		return nil
+	}
+
 	partitions := partitions{
 		StatCommander:     sc,
 		BootEnvReadWriter: env,
@@ -49,16 +55,21 @@ func NewDevice(env BootEnvReadWriter, sc StatCommander, config deviceConfig) *de
 		active:            "",
 		inactive:          "",
 	}
-	device := device{env, sc, &partitions}
-	return &device
+	dualRootfsDevice := dualRootfsDevice{
+		BootEnvReadWriter: env,
+		Commander: sc,
+		partitions: &partitions
+		rebooter: &systemRebooter{sc}
+	}
+	return &dualRootfsDevice
 }
 
-func (d *device) Reboot() error {
+func (d *dualRootfsDevice) Reboot() error {
 	log.Info("Mender rebooting from active partition: %s", d.active)
-	return d.Command("reboot").Run()
+	return d.rebooter.Reboot()
 }
 
-func (d *device) Rollback() error {
+func (d *dualRootfsDevice) Rollback() error {
 	hasUpdate, err := d.HasUpdate()
 	if err != nil {
 		return errors.Wrap(err, "Could not determine whether device has an update")
@@ -82,7 +93,7 @@ func (d *device) Rollback() error {
 	return nil
 }
 
-func (d *device) StoreUpdate(image io.ReadCloser, size int64) error {
+func (d *dualRootfsDevice) StoreUpdate(image io.ReadCloser, size int64) error {
 
 	log.Debugf("Trying to install update of size: %d", size)
 	if image == nil || size < 0 {
@@ -148,7 +159,7 @@ func (d *device) StoreUpdate(image io.ReadCloser, size int64) error {
 	return err
 }
 
-func (d *device) getInactivePartition() (string, string, error) {
+func (d *dualRootfsDevice) getInactivePartition() (string, string, error) {
 	inactivePartition, err := d.GetInactive()
 	if err != nil {
 		return "", "", errors.New("Error obtaining inactive partition: " + err.Error())
@@ -167,7 +178,7 @@ func (d *device) getInactivePartition() (string, string, error) {
 	return partitionNumberDecStr, partitionNumberHexStr, nil
 }
 
-func (d *device) InstallUpdate() error {
+func (d *dualRootfsDevice) InstallUpdate() error {
 
 	inactivePartition, inactivePartitionHex, err := d.getInactivePartition()
 	if err != nil {
@@ -186,7 +197,7 @@ func (d *device) InstallUpdate() error {
 	return nil
 }
 
-func (d *device) CommitUpdate() error {
+func (d *dualRootfsDevice) CommitUpdate() error {
 	// Check if the user has an upgrade to commit, if not, throw an error
 	hasUpdate, err := d.HasUpdate()
 	if err != nil {
@@ -200,7 +211,7 @@ func (d *device) CommitUpdate() error {
 	return errorNoUpgradeMounted
 }
 
-func (d *device) HasUpdate() (bool, error) {
+func (d *dualRootfsDevice) HasUpdate() (bool, error) {
 	env, err := d.ReadEnv("upgrade_available")
 	if err != nil {
 		return false, errors.Wrapf(err, "failed to read environment variable")
@@ -213,7 +224,7 @@ func (d *device) HasUpdate() (bool, error) {
 	return false, nil
 }
 
-func (d *device) VerifyReboot() error {
+func (d *dualRootfsDevice) VerifyReboot() error {
 	hasUpdate, err := d.HasUpdate()
 	if err != nil {
 		return err
@@ -224,7 +235,7 @@ func (d *device) VerifyReboot() error {
 	}
 }
 
-func (d *device) VerifyRollbackReboot() error {
+func (d *dualRootfsDevice) VerifyRollbackReboot() error {
 	hasUpdate, err := d.HasUpdate()
 	if err != nil {
 		return err

@@ -432,11 +432,11 @@ func TestInitDaemon(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 	DeploymentLogger = NewDeploymentLogManager(tempDir)
 	bootstrap := false
-	d, err := initDaemon(&menderConfig{}, &device{}, &uBootEnv{}, &runOptionsType{dataStore: &tempDir, bootstrapForce: &bootstrap})
+	d, err := initDaemon(&menderConfig{}, &dualRootfsDevice{}, &uBootEnv{}, &runOptionsType{dataStore: &tempDir, bootstrapForce: &bootstrap})
 	require.Nil(t, err)
 	assert.NotNil(t, d)
 	// Test with failing init daemon
 	runOpts, err := argsParse([]string{"-daemon"})
 	require.Nil(t, err)
-	assert.Error(t, handleCLIOptions(runOpts, &uBootEnv{}, &device{}, &menderConfig{}))
+	assert.Error(t, handleCLIOptions(runOpts, &uBootEnv{}, &dualRootfsDevice{}, &menderConfig{}))
 }

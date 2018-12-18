@@ -32,10 +32,14 @@ type UInstaller interface {
 	InstallUpdate() error
 }
 
-type UInstallCommitRebooter interface {
-	installer.UInstaller
-	CommitUpdate() error
+type Rebooter interface {
 	Reboot() error
+}
+
+type UInstallCommitRebooter interface {
+	UInstaller
+	Rebooter
+	CommitUpdate() error
 	Rollback() error
 	// Verify that rebooting into the new update worked.
 	VerifyReboot() error
@@ -45,7 +49,7 @@ type UInstallCommitRebooter interface {
 
 func Install(art io.ReadCloser, dt string, key []byte,
 	scrDir, modulesDir, modulesWorkDir string,
-	device UInstaller, acceptStateScripts bool) error {
+	dualRootfsDevice UInstaller, acceptStateScripts bool) error {
 
 	var ar *areader.Reader
 	// if there is a verification key artifact must be signed
@@ -59,7 +63,7 @@ func Install(art io.ReadCloser, dt string, key []byte,
 	// Important for the client to forbid artifacts types we don't know.
 	ar.ForbidUnknownHandlers = true
 
-	if err := registerHandlers(ar, device); err != nil {
+	if err := registerHandlers(ar, dualRootfsDevice); err != nil {
 		return err
 	}
 
@@ -139,12 +143,12 @@ func Install(art io.ReadCloser, dt string, key []byte,
 	return nil
 }
 
-func registerHandlers(ar *areader.Reader, device UInstaller) error {
+func registerHandlers(ar *areader.Reader, dualRootfsDevice UInstaller) error {
 	// Built-in rootfs handler.
 	rootfs := handlers.NewRootfsInstaller()
 	rootfs.InstallHandler = func(r io.Reader, df *handlers.DataFile) error {
 		log.Debugf("installing update %v of size %v", df.Name, df.Size)
-		err := device.StoreUpdate(ioutil.NopCloser(r), df.Size)
+		err := dualRootfsDevice.StoreUpdate(ioutil.NopCloser(r), df.Size)
 		if err != nil {
 			log.Errorf("update image installation failed: %v", err)
 			return err

@@ -39,36 +39,36 @@ func (f *fakeBootEnv) WriteEnv(w BootVars) error {
 }
 
 func Test_commitUpdate(t *testing.T) {
-	device := device{}
+	dualRootfsDevice := dualRootfsDevice{}
 
-	device.BootEnvReadWriter = &fakeBootEnv{
+	dualRootfsDevice.BootEnvReadWriter = &fakeBootEnv{
 		readVars: BootVars{
 			"upgrade_available": "1",
 		},
 	}
 
-	if err := device.CommitUpdate(); err != nil {
+	if err := dualRootfsDevice.CommitUpdate(); err != nil {
 		t.FailNow()
 	}
 
-	device.BootEnvReadWriter = &fakeBootEnv{
+	dualRootfsDevice.BootEnvReadWriter = &fakeBootEnv{
 		readVars: BootVars{
 			"upgrade_available": "0",
 		},
 	}
 
-	if err := device.CommitUpdate(); err != errorNoUpgradeMounted {
+	if err := dualRootfsDevice.CommitUpdate(); err != errorNoUpgradeMounted {
 		t.FailNow()
 	}
 
-	device.BootEnvReadWriter = &fakeBootEnv{
+	dualRootfsDevice.BootEnvReadWriter = &fakeBootEnv{
 		readVars: BootVars{
 			"upgrade_available": "1",
 		},
 		readErr: errors.New("IO error"),
 	}
 
-	if err := device.CommitUpdate(); err == nil {
+	if err := dualRootfsDevice.CommitUpdate(); err == nil {
 		t.FailNow()
 	}
 }
@@ -80,7 +80,7 @@ func Test_enableUpdatedPartition_wrongPartitinNumber_fails(t *testing.T) {
 	testPart := partitions{}
 	testPart.inactive = "inactive"
 
-	testDevice := device{}
+	testDevice := dualRootfsDevice{}
 	testDevice.partitions = &testPart
 	testDevice.BootEnvReadWriter = &fakeEnv
 
@@ -96,7 +96,7 @@ func Test_enableUpdatedPartition_correctPartitinNumber(t *testing.T) {
 	testPart := partitions{}
 	testPart.inactive = "inactive2"
 
-	testDevice := device{}
+	testDevice := dualRootfsDevice{}
 	testDevice.partitions = &testPart
 	testDevice.BootEnvReadWriter = &fakeEnv
 
@@ -111,7 +111,7 @@ func Test_enableUpdatedPartition_correctPartitinNumber(t *testing.T) {
 }
 
 func Test_installUpdate_existingAndNonInactivePartition(t *testing.T) {
-	testDevice := device{}
+	testDevice := dualRootfsDevice{}
 
 	fakePartitions := partitions{}
 	fakePartitions.inactive = "/non/existing"
@@ -172,7 +172,7 @@ func Test_Rollback_OK(t *testing.T) {
 	testPart := partitions{}
 	testPart.inactive = "part2"
 
-	testDevice := device{}
+	testDevice := dualRootfsDevice{}
 	testDevice.partitions = &testPart
 	testDevice.BootEnvReadWriter = &fakeEnv
 
@@ -183,27 +183,27 @@ func Test_Rollback_OK(t *testing.T) {
 
 func TestDeviceHasUpdate(t *testing.T) {
 	runner := newTestOSCalls("", -1)
-	testDevice := NewDevice(
+	testDevice := NewDualRootfsDevice(
 		&uBootEnv{&runner},
 		nil,
-		deviceConfig{})
+		dualRootfsDeviceConfig{})
 	has, err := testDevice.HasUpdate()
 	assert.Error(t, err)
 
 	runner = newTestOSCalls("upgrade_available=0", 0)
-	testDevice = NewDevice(
+	testDevice = NewDualRootfsDevice(
 		&uBootEnv{&runner},
 		nil,
-		deviceConfig{})
+		dualRootfsDeviceConfig{})
 	has, err = testDevice.HasUpdate()
 	assert.False(t, has)
 	assert.NoError(t, err)
 
 	runner = newTestOSCalls("upgrade_available=1", 0)
-	testDevice = NewDevice(
+	testDevice = NewDualRootfsDevice(
 		&uBootEnv{&runner},
 		nil,
-		deviceConfig{})
+		dualRootfsDeviceConfig{})
 	has, err = testDevice.HasUpdate()
 	assert.True(t, has)
 	assert.NoError(t, err)

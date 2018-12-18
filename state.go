@@ -1242,7 +1242,7 @@ func StoreStateData(store store.Store, sd StateData) error {
 }
 
 func LoadStateData(store store.Store) (StateData, error) {
-	data, err := store.ReadAll(stateDataKey)
+	data, err := store.ReadAll(datastore.StateDataKey)
 	if err != nil {
 		return StateData{}, err
 	}
@@ -1267,5 +1267,5 @@ func RemoveStateData(store store.Store) error {
 	if store == nil {
 		return nil
 	}
-	return store.Remove(stateDataKey)
+	return store.Remove(datastore.StateDataKey)
 }

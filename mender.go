@@ -39,14 +39,6 @@ type BootEnvReadWriter interface {
 	WriteEnv(BootVars) error
 }
 
-type UInstallCommitRebooter interface {
-	installer.UInstaller
-	CommitUpdate() error
-	Reboot() error
-	SwapPartitions() error
-	HasUpdate() (bool, error)
-}
-
 type Controller interface {
 	IsAuthorized() bool
 	Authorize() menderError
@@ -54,7 +46,6 @@ type Controller interface {
 	GetUpdatePollInterval() time.Duration
 	GetInventoryPollInterval() time.Duration
 	GetRetryPollInterval() time.Duration
-	HasUpgrade() (bool, menderError)
 	CheckUpdate() (*client.UpdateResponse, menderError)
 	FetchUpdate(url string) (io.ReadCloser, int64, error)
 	ReportUpdateStatus(update client.UpdateResponse, status string) menderError
@@ -62,7 +53,7 @@ type Controller interface {
 	InventoryRefresh() error
 	CheckScriptsCompatibility() error
 
-	UInstallCommitRebooter
+	installer.UInstallCommitRebooter
 	StateRunner
 }
 
@@ -84,6 +75,8 @@ var (
 
 type MenderState int
 
+// Do not change the order or remove any of these constants, since they are
+// stored in the database. Only add to the end.
 const (
 	// initial state
 	MenderStateInit MenderState = iota
@@ -233,8 +226,6 @@ type mender struct {
 	state               State
 	stateScriptExecutor statescript.Executor
 	stateScriptPath     string
-	modulesPath         string
-	modulesWorkPath     string
 	config              menderConfig
 	artifactInfoFile    string
 	deviceTypeFile      string
@@ -279,8 +270,6 @@ func NewMender(config menderConfig, pieces MenderPieces) (*mender, error) {
 		authToken:              noAuthToken,
 		stateScriptExecutor:    stateScrExec,
 		stateScriptPath:        defaultArtScriptsPath,
-		modulesPath:            defaultModulesPath,
-		modulesWorkPath:        defaultModulesWorkPath,
 	}
 
 	if m.authMgr != nil {
@@ -339,14 +328,6 @@ func GetCurrentArtifactName(artifactInfoFile string) (string, error) {
 
 func GetDeviceType(deviceTypeFile string) (string, error) {
 	return getManifestData("device_type", deviceTypeFile)
-}
-
-func (m *mender) HasUpgrade() (bool, menderError) {
-	has, err := m.UInstallCommitRebooter.HasUpdate()
-	if err != nil {
-		return false, NewFatalError(err)
-	}
-	return has, nil
 }
 
 func (m *mender) ForceBootstrap() {
@@ -703,15 +684,13 @@ func TransitionError(s State, action string) State {
 		}
 		return NewUpdateErrorState(me, t.update)
 	case *UpdateInstallState:
-		return NewRollbackState(t.Update(), false, false)
+		return NewRollbackState(t.Update(), false)
 	case *RebootState:
-		return NewRollbackState(t.Update(), false, false)
+		return NewRollbackState(t.Update(), false)
 	case *AfterRebootState:
-		return NewRollbackState(t.Update(), true, true)
-	case *UpdateVerifyState:
-		return NewRollbackState(t.Update(), true, true)
+		return NewRollbackState(t.Update(), true)
 	case *UpdateCommitState:
-		return NewRollbackState(t.Update(), true, true)
+		return NewRollbackState(t.Update(), true)
 	case *RollbackState:
 		if t.reboot {
 			return NewRollbackRebootState(t.Update())
@@ -852,7 +831,7 @@ func (m *mender) CheckScriptsCompatibility() error {
 	return m.stateScriptExecutor.CheckRootfsScriptsVersion()
 }
 
-func (m *mender) InstallUpdate(from io.ReadCloser, size int64) error {
+func (m *mender) StoreUpdate(from io.ReadCloser, size int64) error {
 	deviceType, err := m.GetDeviceType()
 	if err != nil {
 		log.Errorf("Unable to verify the existing hardware. Update will continue anyways: %v : %v", defaultDeviceTypeFile, err)
@@ -861,8 +840,8 @@ func (m *mender) InstallUpdate(from io.ReadCloser, size int64) error {
 		deviceType,
 		m.GetArtifactVerifyKey(),
 		m.stateScriptPath,
-		m.modulesPath,
-		m.modulesWorkPath,
+		m.config.ModulesPath,
+		m.config.ModulesWorkPath,
 		m.UInstallCommitRebooter,
 		true)
 }

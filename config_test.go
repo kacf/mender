@@ -85,7 +85,8 @@ func Test_readConfigFile_brokenContent_returnsError(t *testing.T) {
 }
 
 func validateConfiguration(t *testing.T, actual *menderConfig) {
-	expectedConfig := menderConfig{
+	expectedConfig := NewMenderConfig()
+	expectedConfig.menderConfigFromFile = menderConfigFromFile{
 		ClientProtocol: "https",
 		HttpsClient: struct {
 			Certificate string
@@ -105,7 +106,7 @@ func validateConfiguration(t *testing.T, actual *menderConfig) {
 		UpdateLogPath:                "/var/lib/mender/log/deployment.log",
 		Servers:                      []client.MenderServer{{ServerURL: "mender.io"}},
 	}
-	if !assert.True(t, reflect.DeepEqual(actual, &expectedConfig)) {
+	if !assert.True(t, reflect.DeepEqual(actual, expectedConfig)) {
 		t.Logf("got:      %+v", actual)
 		t.Logf("expected: %+v", expectedConfig)
 	}

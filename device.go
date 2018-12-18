@@ -58,7 +58,15 @@ func (d *device) Reboot() error {
 	return d.Command("reboot").Run()
 }
 
-func (d *device) SwapPartitions() error {
+func (d *device) Rollback() error {
+	hasUpdate, err := d.HasUpdate()
+	if err != nil {
+		return errors.Wrap(err, "Could not determine whether device has an update")
+	} else if !hasUpdate {
+		// Nothing to do.
+		return nil
+	}
+
 	// first get inactive partition
 	inactivePartition, inactivePartitionHex, err := d.getInactivePartition()
 	if err != nil {
@@ -74,7 +82,7 @@ func (d *device) SwapPartitions() error {
 	return nil
 }
 
-func (d *device) InstallUpdate(image io.ReadCloser, size int64) error {
+func (d *device) StoreUpdate(image io.ReadCloser, size int64) error {
 
 	log.Debugf("Trying to install update of size: %d", size)
 	if image == nil || size < 0 {
@@ -159,7 +167,7 @@ func (d *device) getInactivePartition() (string, string, error) {
 	return partitionNumberDecStr, partitionNumberHexStr, nil
 }
 
-func (d *device) EnableUpdatedPartition() error {
+func (d *device) InstallUpdate() error {
 
 	inactivePartition, inactivePartitionHex, err := d.getInactivePartition()
 	if err != nil {
@@ -203,4 +211,26 @@ func (d *device) HasUpdate() (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+func (d *device) VerifyReboot() error {
+	hasUpdate, err := d.HasUpdate()
+	if err != nil {
+		return err
+	} else if !hasUpdate {
+		return errors.New("Reboot to new update failed. Expected \"upgrade_available\" flag to be true but it was false")
+	} else {
+		return nil
+	}
+}
+
+func (d *device) VerifyRollbackReboot() error {
+	hasUpdate, err := d.HasUpdate()
+	if err != nil {
+		return err
+	} else if hasUpdate {
+		return errors.New("Reboot to old update failed. Expected \"upgrade_available\" flag to be false but it was true")
+	} else {
+		return nil
+	}
 }

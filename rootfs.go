@@ -1,4 +1,4 @@
-// Copyright 2017 Northern.tech AS
+// Copyright 2018 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import (
 
 // This will be run manually from command line ONLY
 func doRootfs(device installer.UInstaller, args runOptionsType, dt string,
-	vKey []byte) error {
+	vKey []byte, config *menderConfig) error {
 	var image io.ReadCloser
 	var imageSize int64
 	var err error
@@ -78,13 +78,14 @@ func doRootfs(device installer.UInstaller, args runOptionsType, dt string,
 	}
 	tr := io.TeeReader(image, p)
 
-	err = installer.Install(ioutil.NopCloser(tr), dt, vKey, "", device, *args.runStateScripts)
+	err = installer.Install(ioutil.NopCloser(tr), dt, vKey, "", config.ModulesPath,
+		config.ModulesWorkPath, device, *args.runStateScripts)
 	if err != nil {
 		log.Errorf("Installation failed: %s", err.Error())
 		return err
 	}
 
-	err = device.EnableUpdatedPartition()
+	err = device.InstallUpdate()
 	if err != nil {
 		log.Errorf("Enabling updated partition failed: %s", err.Error())
 		return err

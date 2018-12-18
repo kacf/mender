@@ -1,4 +1,4 @@
-// Copyright 2017 Northern.tech AS
+// Copyright 2018 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -34,14 +34,14 @@ func TestInstall(t *testing.T) {
 	assert.NotNil(t, art)
 
 	// image not compatible with device
-	err = Install(art, "fake-device", nil, "", nil, true)
+	err = Install(art, "fake-device", nil, "", "", "", nil, true)
 	assert.Error(t, err)
 	assert.Contains(t, errors.Cause(err).Error(),
 		"not compatible with device fake-device")
 
 	art, err = MakeRootfsImageArtifact(1, false, false)
 	assert.NoError(t, err)
-	err = Install(art, "vexpress-qemu", nil, "", new(fDevice), true)
+	err = Install(art, "vexpress-qemu", nil, "", "", "", new(fDevice), true)
 	assert.NoError(t, err)
 }
 
@@ -53,13 +53,13 @@ func TestInstallSigned(t *testing.T) {
 	// no key for verifying artifact
 	art, err = MakeRootfsImageArtifact(2, true, false)
 	assert.NoError(t, err)
-	err = Install(art, "vexpress-qemu", nil, "", new(fDevice), true)
+	err = Install(art, "vexpress-qemu", nil, "", "", "", new(fDevice), true)
 	assert.NoError(t, err)
 
 	// image not compatible with device
 	art, err = MakeRootfsImageArtifact(2, true, false)
 	assert.NoError(t, err)
-	err = Install(art, "fake-device", []byte(PublicRSAKey), "", new(fDevice), true)
+	err = Install(art, "fake-device", []byte(PublicRSAKey), "", "", "", new(fDevice), true)
 	assert.Error(t, err)
 	assert.Contains(t, errors.Cause(err).Error(),
 		"not compatible with device fake-device")
@@ -67,19 +67,19 @@ func TestInstallSigned(t *testing.T) {
 	// installation successful
 	art, err = MakeRootfsImageArtifact(2, true, false)
 	assert.NoError(t, err)
-	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", new(fDevice), true)
+	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", "", "", new(fDevice), true)
 	assert.NoError(t, err)
 
 	// have a key but artifact is unsigned
 	art, err = MakeRootfsImageArtifact(2, false, false)
 	assert.NoError(t, err)
-	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", new(fDevice), true)
+	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", "", "", new(fDevice), true)
 	assert.Error(t, err)
 
 	// have a key but artifact is v1
 	art, err = MakeRootfsImageArtifact(1, false, false)
 	assert.NoError(t, err)
-	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", new(fDevice), true)
+	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", "", "", new(fDevice), true)
 	assert.Error(t, err)
 }
 
@@ -89,7 +89,7 @@ func TestInstallNoSignature(t *testing.T) {
 	assert.NotNil(t, art)
 
 	// image does not contain signature
-	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", new(fDevice), true)
+	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", "", "", new(fDevice), true)
 	assert.Error(t, err)
 	assert.Contains(t, errors.Cause(err).Error(),
 		"expecting signed artifact, but no signature file found")
@@ -104,18 +104,18 @@ func TestInstallWithScripts(t *testing.T) {
 	assert.NoError(t, err)
 	defer os.RemoveAll(scrDir)
 
-	err = Install(art, "vexpress-qemu", nil, scrDir, new(fDevice), true)
+	err = Install(art, "vexpress-qemu", nil, scrDir, "", "", new(fDevice), true)
 	assert.NoError(t, err)
 }
 
 type fDevice struct{}
 
-func (d *fDevice) InstallUpdate(r io.ReadCloser, l int64) error {
+func (d *fDevice) StoreUpdate(r io.ReadCloser, l int64) error {
 	_, err := io.Copy(ioutil.Discard, r)
 	return err
 }
 
-func (d *fDevice) EnableUpdatedPartition() error { return nil }
+func (d *fDevice) InstallUpdate() error { return nil }
 
 const (
 	PublicRSAKey = `-----BEGIN PUBLIC KEY-----
@@ -180,9 +180,15 @@ func MakeRootfsImageArtifact(version int, signed bool,
 		}
 	}
 
-	updates := &awriter.Updates{U: []handlers.Composer{u}}
-	err = aw.WriteArtifact("mender", version, []string{"vexpress-qemu"},
-		"mender-1.1", updates, &scr)
+	updates := &awriter.Updates{Updates: []handlers.Composer{u}}
+	err = aw.WriteArtifact(&awriter.WriteArtifactArgs{
+		Format:  "mender",
+		Version: version,
+		Devices: []string{"vexpress-qemu"},
+		Name:    "mender-1.1",
+		Updates: updates,
+		Scripts: &scr,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -123,7 +123,11 @@ func newTestMender(runner *testOSCalls, config menderConfig, pieces testMenderPi
 }
 
 func newDefaultTestMender() *mender {
-	return newTestMender(nil, menderConfig{Servers: []client.MenderServer{{}}}, testMenderPieces{})
+	return newTestMender(nil, menderConfig{
+		menderConfigFromFile: menderConfigFromFile{
+			Servers: []client.MenderServer{{}},
+		},
+	}, testMenderPieces{})
 }
 
 func Test_ForceBootstrap(t *testing.T) {
@@ -245,7 +249,9 @@ func Test_CheckUpdateSimple(t *testing.T) {
 	var mender *mender
 
 	mender = newTestMender(nil, menderConfig{
-		Servers: []client.MenderServer{{ServerURL: "bogusurl"}},
+		menderConfigFromFile: menderConfigFromFile{
+			Servers: []client.MenderServer{{ServerURL: "bogusurl"}},
+		},
 	}, testMenderPieces{})
 
 	up, err := mender.CheckUpdate()
@@ -259,7 +265,9 @@ func Test_CheckUpdateSimple(t *testing.T) {
 
 	mender = newTestMender(nil,
 		menderConfig{
-			Servers: []client.MenderServer{{ServerURL: srv.URL}},
+			menderConfigFromFile: menderConfigFromFile{
+				Servers: []client.MenderServer{{ServerURL: srv.URL}},
+			},
 		},
 		testMenderPieces{})
 	mender.artifactInfoFile = artifactInfo
@@ -305,45 +313,11 @@ func Test_CheckUpdateSimple(t *testing.T) {
 	assert.Nil(t, up)
 }
 
-func TestMenderHasUpgrade(t *testing.T) {
-	mender := newTestMender(nil, menderConfig{}, testMenderPieces{
-		MenderPieces: MenderPieces{
-			device: &fakeDevice{
-				retHasUpdate: true,
-			},
-		},
-	})
-
-	h, err := mender.HasUpgrade()
-	assert.NoError(t, err)
-	assert.True(t, h)
-
-	mender = newTestMender(nil, menderConfig{}, testMenderPieces{
-		MenderPieces: MenderPieces{
-			device: &fakeDevice{
-				retHasUpdate: false,
-			},
-		},
-	})
-
-	h, err = mender.HasUpgrade()
-	assert.NoError(t, err)
-	assert.False(t, h)
-
-	mender = newTestMender(nil, menderConfig{}, testMenderPieces{
-		MenderPieces: MenderPieces{
-			device: &fakeDevice{
-				retHasUpdateError: errors.New("failed"),
-			},
-		},
-	})
-	h, err = mender.HasUpgrade()
-	assert.Error(t, err)
-}
-
 func TestMenderGetUpdatePollInterval(t *testing.T) {
 	mender := newTestMender(nil, menderConfig{
-		UpdatePollIntervalSeconds: 20,
+		menderConfigFromFile: menderConfigFromFile{
+			UpdatePollIntervalSeconds: 20,
+		},
 	}, testMenderPieces{})
 
 	intvl := mender.GetUpdatePollInterval()
@@ -352,7 +326,9 @@ func TestMenderGetUpdatePollInterval(t *testing.T) {
 
 func TestMenderGetInventoryPollInterval(t *testing.T) {
 	mender := newTestMender(nil, menderConfig{
-		InventoryPollIntervalSeconds: 10,
+		menderConfigFromFile: menderConfigFromFile{
+			InventoryPollIntervalSeconds: 10,
+		},
 	}, testMenderPieces{})
 
 	intvl := mender.GetInventoryPollInterval()
@@ -502,7 +478,9 @@ func TestMenderReportStatus(t *testing.T) {
 	ms := store.NewMemStore()
 	mender := newTestMender(nil,
 		menderConfig{
-			Servers: []client.MenderServer{{ServerURL: srv.URL}},
+			menderConfigFromFile: menderConfigFromFile{
+				Servers: []client.MenderServer{{ServerURL: srv.URL}},
+			},
 		},
 		testMenderPieces{
 			MenderPieces: MenderPieces{
@@ -565,7 +543,9 @@ func TestMenderLogUpload(t *testing.T) {
 	ms := store.NewMemStore()
 	mender := newTestMender(nil,
 		menderConfig{
-			Servers: []client.MenderServer{{ServerURL: srv.URL}},
+			menderConfigFromFile: menderConfigFromFile{
+				Servers: []client.MenderServer{{ServerURL: srv.URL}},
+			},
 		},
 		testMenderPieces{
 			MenderPieces: MenderPieces{
@@ -644,7 +624,9 @@ func TestAuthToken(t *testing.T) {
 	ms := store.NewMemStore()
 	mender := newTestMender(nil,
 		menderConfig{
-			Servers: []client.MenderServer{{ServerURL: ts.URL}},
+			menderConfigFromFile: menderConfigFromFile{
+				Servers: []client.MenderServer{{ServerURL: ts.URL}},
+			},
 		},
 		testMenderPieces{
 			MenderPieces: MenderPieces{
@@ -699,7 +681,9 @@ func TestMenderInventoryRefresh(t *testing.T) {
 	ms := store.NewMemStore()
 	mender := newTestMender(nil,
 		menderConfig{
-			Servers: []client.MenderServer{{ServerURL: srv.URL}},
+			menderConfigFromFile: menderConfigFromFile{
+				Servers: []client.MenderServer{{ServerURL: srv.URL}},
+			},
 		},
 		testMenderPieces{
 			MenderPieces: MenderPieces{
@@ -851,9 +835,15 @@ func MakeRootfsImageArtifact(version int, signed bool) (io.ReadCloser, error) {
 		u = handlers.NewRootfsV2(upd)
 	}
 
-	updates := &awriter.Updates{U: []handlers.Composer{u}}
-	err = aw.WriteArtifact("mender", version, []string{"vexpress-qemu"},
-		"mender-1.1", updates, nil)
+	updates := &awriter.Updates{Updates: []handlers.Composer{u}}
+	err = aw.WriteArtifact(&awriter.WriteArtifactArgs{
+		Format:  "mender",
+		Version: version,
+		Devices: []string{"vexpress-qemu"},
+		Name:    "mender-1.1",
+		Updates: updates,
+		Scripts: nil,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -869,7 +859,7 @@ func (m *mockReader) Read(p []byte) (int, error) {
 	return ret.Get(0).(int), ret.Error(1)
 }
 
-func TestMenderInstallUpdate(t *testing.T) {
+func TestMenderStoreUpdate(t *testing.T) {
 	// create temp dir
 	td, _ := ioutil.TempDir("", "mender-install-update-")
 	defer os.RemoveAll(td)
@@ -889,14 +879,14 @@ func TestMenderInstallUpdate(t *testing.T) {
 	// try some failure scenarios first
 
 	// EOF
-	err := mender.InstallUpdate(ioutil.NopCloser(&bytes.Buffer{}), 0)
+	err := mender.StoreUpdate(ioutil.NopCloser(&bytes.Buffer{}), 0)
 	assert.Error(t, err)
 	t.Logf("error: %v", err)
 
 	// some error from reader
 	mr := mockReader{}
 	mr.On("Read").Return(0, errors.New("failed"))
-	err = mender.InstallUpdate(ioutil.NopCloser(&mr), 0)
+	err = mender.StoreUpdate(ioutil.NopCloser(&mr), 0)
 	assert.Error(t, err)
 	t.Logf("error: %v", err)
 
@@ -907,7 +897,7 @@ func TestMenderInstallUpdate(t *testing.T) {
 
 	// setup soem bogus device_type so that we don't match the update
 	ioutil.WriteFile(deviceType, []byte("device_type=bogusdevicetype\n"), 0644)
-	err = mender.InstallUpdate(upd, 0)
+	err = mender.StoreUpdate(upd, 0)
 	assert.Error(t, err)
 
 	// try with a legit device_type
@@ -916,7 +906,7 @@ func TestMenderInstallUpdate(t *testing.T) {
 	assert.NotNil(t, upd)
 
 	ioutil.WriteFile(deviceType, []byte("device_type=vexpress-qemu\n"), 0644)
-	err = mender.InstallUpdate(upd, 0)
+	err = mender.StoreUpdate(upd, 0)
 	assert.NoError(t, err)
 
 	// now try with device throwing errors durin ginstall
@@ -927,12 +917,12 @@ func TestMenderInstallUpdate(t *testing.T) {
 	mender = newTestMender(nil, menderConfig{},
 		testMenderPieces{
 			MenderPieces: MenderPieces{
-				device: &fakeDevice{retInstallUpdate: errors.New("failed")},
+				device: &fakeDevice{retStoreUpdate: errors.New("failed")},
 			},
 		},
 	)
 	mender.deviceTypeFile = deviceType
-	err = mender.InstallUpdate(upd, 0)
+	err = mender.StoreUpdate(upd, 0)
 	assert.Error(t, err)
 
 }
@@ -946,7 +936,9 @@ func TestMenderFetchUpdate(t *testing.T) {
 	ms := store.NewMemStore()
 	mender := newTestMender(nil,
 		menderConfig{
-			ServerURL: srv.URL,
+			menderConfigFromFile: menderConfigFromFile{
+				ServerURL: srv.URL,
+			},
 		},
 		testMenderPieces{
 			MenderPieces: MenderPieces{
@@ -1019,7 +1011,9 @@ func TestReauthorization(t *testing.T) {
 	// make and configure a mender
 	mender := newTestMender(nil,
 		menderConfig{
-			Servers: []client.MenderServer{{ServerURL: srv.URL}},
+			menderConfigFromFile: menderConfigFromFile{
+				Servers: []client.MenderServer{{ServerURL: srv.URL}},
+			},
 		},
 		testMenderPieces{})
 	mender.artifactInfoFile = "artifact_info"
@@ -1085,8 +1079,10 @@ func TestFailoverServers(t *testing.T) {
 	srv2.Auth.Authorize = true
 	mender := newTestMender(nil,
 		menderConfig{
-			ServerURL: srv1.URL,
-			Servers:   srvrs,
+			menderConfigFromFile: menderConfigFromFile{
+				ServerURL: srv1.URL,
+				Servers:   srvrs,
+			},
 		},
 		testMenderPieces{})
 	mender.artifactInfoFile = "artifact_info"

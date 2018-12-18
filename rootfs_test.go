@@ -1,4 +1,4 @@
-// Copyright 2017 Northern.tech AS
+// Copyright 2018 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ import (
 )
 
 func Test_doManualUpdate_noParams_fail(t *testing.T) {
-	if err := doRootfs(new(device), runOptionsType{}, "", nil); err == nil {
+	if err := doRootfs(new(device), runOptionsType{}, "", nil, &menderConfig{}); err == nil {
 		t.FailNow()
 	}
 }
@@ -36,7 +36,7 @@ func Test_doManualUpdate_invalidHttpsClientConfig_updateFails(t *testing.T) {
 	runOptions.imageFile = &iamgeFileName
 	runOptions.ServerCert = "non-existing"
 
-	if err := doRootfs(new(device), runOptions, "", nil); err == nil {
+	if err := doRootfs(new(device), runOptions, "", nil, &menderConfig{}); err == nil {
 		t.FailNow()
 	}
 }
@@ -47,7 +47,7 @@ func Test_doManualUpdate_nonExistingFile_fail(t *testing.T) {
 	imageFileName := "non-existing"
 	fakeRunOptions.imageFile = &imageFileName
 
-	if err := doRootfs(&fakeDevice, fakeRunOptions, "", nil); err == nil {
+	if err := doRootfs(&fakeDevice, fakeRunOptions, "", nil, &menderConfig{}); err == nil {
 		t.FailNow()
 	}
 }
@@ -58,7 +58,7 @@ func Test_doManualUpdate_networkUpdateNoClient_fail(t *testing.T) {
 	imageFileName := "http://non-existing"
 	fakeRunOptions.imageFile = &imageFileName
 
-	if err := doRootfs(&fakeDevice, fakeRunOptions, "", nil); err == nil {
+	if err := doRootfs(&fakeDevice, fakeRunOptions, "", nil, &menderConfig{}); err == nil {
 		t.FailNow()
 	}
 }
@@ -76,14 +76,14 @@ func Test_doManualUpdate_networkClientExistsNoServer_fail(t *testing.T) {
 			NoVerify:   false,
 		}
 
-	if err := doRootfs(&fakeDevice, fakeRunOptions, "", nil); err == nil {
+	if err := doRootfs(&fakeDevice, fakeRunOptions, "", nil, &menderConfig{}); err == nil {
 		t.FailNow()
 	}
 }
 
 func Test_doManualUpdate_installFailing_updateFails(t *testing.T) {
 	fd := fakeDevice{}
-	fd.retInstallUpdate = errors.New("")
+	fd.retStoreUpdate = errors.New("")
 	fakeRunOptions := runOptionsType{}
 	imageFileName := "imageFile"
 	fakeRunOptions.imageFile = &imageFileName
@@ -97,7 +97,7 @@ func Test_doManualUpdate_installFailing_updateFails(t *testing.T) {
 
 	defer os.Remove("imageFile")
 
-	if err := doRootfs(fd, fakeRunOptions, "", nil); err == nil {
+	if err := doRootfs(fd, fakeRunOptions, "", nil, &menderConfig{}); err == nil {
 		t.FailNow()
 	}
 }
@@ -126,6 +126,6 @@ func Test_doManualUpdate_existingFile_updateSuccess(t *testing.T) {
 	forceRunScriptsFlag := false
 	fakeRunOptions.runStateScripts = &forceRunScriptsFlag
 
-	err = doRootfs(dev, fakeRunOptions, "vexpress-qemu", nil)
+	err = doRootfs(dev, fakeRunOptions, "vexpress-qemu", nil, &menderConfig{})
 	assert.NoError(t, err)
 }

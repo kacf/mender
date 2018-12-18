@@ -341,15 +341,11 @@ func TestTransitionReporting(t *testing.T) {
 			expected: true,
 		},
 		{
-			state:    NewUpdateVerifyState(update),
-			expected: true,
-		},
-		{
 			state:    NewUpdateCommitState(update),
 			expected: true,
 		},
 		{
-			state:    NewRollbackState(update, false, false),
+			state:    NewRollbackState(update, false),
 			expected: true,
 		},
 		{

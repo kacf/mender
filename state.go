@@ -21,6 +21,7 @@ import (
 
 	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender/client"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/store"
 	"github.com/pkg/errors"
 )
@@ -161,11 +162,6 @@ type StateData struct {
 	// update status
 	UpdateStatus string
 }
-
-const (
-	// name of key that state data is stored under across reboots
-	stateDataKey = "state"
-)
 
 var (
 	initState = &InitState{
@@ -374,24 +370,17 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 
 	log.Infof("handling loaded state: %s", sd.Name)
 
-	if !committedPartition(c) {
-		// only valid entrypoint into the uncommitted partition is reboot_leave
-		if sd.Name != MenderStateReboot {
-			// entered the uncommitted partition without finishing the whole update-path
-			// on the committed partition, therefore reboot back into the committed partition
-			// and error
-			log.Info("Entered the uncommitted partition with invalid state-data stored. Rebooting.")
-			if err := c.Reboot(); err != nil {
-				return NewUpdateErrorState(NewFatalError(errors.Errorf("failed to reboot device: %v", err)), sd.UpdateInfo), false
-			}
-			// should never happen
-			return doneState, false
-		}
-		return NewAfterRebootState(sd.UpdateInfo), false
-	}
-
 	// check last known state
 	switch sd.Name {
+
+	case MenderStateReboot:
+		// After reboot into new update.
+		err = c.VerifyReboot()
+		log.Errorf("HERE %v", err)
+		if err != nil {
+			return NewRollbackState(sd.UpdateInfo, true), false
+		}
+		return NewAfterRebootState(sd.UpdateInfo), false
 
 	case MenderStateRollbackReboot:
 		return NewAfterRollbackRebootState(sd.UpdateInfo), false
@@ -412,16 +401,6 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 
 		return NewUpdateErrorState(me, sd.UpdateInfo), false
 	}
-}
-
-func committedPartition(c Controller) bool {
-
-	ua, err := c.HasUpgrade()
-	if err != nil {
-		// failure to query u-boot
-		return false
-	}
-	return !ua
 }
 
 type AuthorizeWaitState struct {
@@ -463,49 +442,6 @@ func (a *AuthorizeState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	return checkWaitState, false
 }
 
-type UpdateVerifyState struct {
-	UpdateState
-}
-
-func NewUpdateVerifyState(update client.UpdateResponse) State {
-	return &UpdateVerifyState{
-		UpdateState: NewUpdateState(MenderStateUpdateVerify,
-			ToArtifactReboot_Leave, update),
-	}
-}
-
-func (uv *UpdateVerifyState) Handle(ctx *StateContext, c Controller) (State, bool) {
-
-	// start deployment logging
-	if err := DeploymentLogger.Enable(uv.Update().ID); err != nil {
-		// just log error
-		log.Errorf("failed to enable deployment logger: %s", err)
-	}
-
-	log.Debug("handle update verify state")
-
-	// look at the update flag
-	has, haserr := c.HasUpgrade()
-	if haserr != nil {
-		log.Errorf("has upgrade check failed: %v", haserr)
-		me := NewFatalError(errors.Wrapf(haserr, "failed to perform 'has upgrade' check"))
-		return NewUpdateErrorState(me, uv.Update()), false
-	}
-
-	if has {
-		return NewUpdateCommitState(uv.Update()), false
-	}
-
-	// HasUpgrade() returned false
-	// most probably booting new image failed and u-boot rolled back to
-	// previous image
-	log.Errorf("update info for deployment %v present, but update flag is not set;"+
-		" running rollback image (previous active partition)",
-		uv.Update().ID)
-
-	return NewRollbackState(uv.Update(), false, false), false
-}
-
 type UpdateCommitState struct {
 	UpdateState
 }
@@ -530,7 +466,7 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 
 	if err != nil {
 		log.Errorf("Cannot determine name of new artifact. Update will not continue: %v : %v", defaultDeviceTypeFile, err)
-		return NewRollbackState(uc.Update(), false, true), false
+		return NewRollbackState(uc.Update(), true), false
 	} else if uc.Update().ArtifactName() != artifactName {
 		// seems like we're running in a different image than expected from update
 		// information, best report an error
@@ -539,7 +475,7 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 		log.Errorf("running with image %v, expected updated image %v",
 			artifactName, uc.Update().ArtifactName())
 
-		return NewRollbackState(uc.Update(), false, true), false
+		return NewRollbackState(uc.Update(), true), false
 	}
 
 	// update info and has upgrade flag are there, we're running the new
@@ -549,7 +485,7 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 	// check if state scripts version is supported
 	if err = c.CheckScriptsCompatibility(); err != nil {
 		log.Errorf("update commit failed: %s", err)
-		return NewRollbackState(uc.Update(), false, true), false
+		return NewRollbackState(uc.Update(), true), false
 	}
 
 	err = c.CommitUpdate()
@@ -558,7 +494,7 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 		// we need to perform roll-back here; one scenario is when u-boot fw utils
 		// won't work after update; at this point without rolling-back it won't be
 		// possible to perform new update
-		return NewRollbackState(uc.Update(), false, true), false
+		return NewRollbackState(uc.Update(), true), false
 	}
 
 	log.Info("Storing commit state data")
@@ -696,7 +632,7 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 		return NewUpdateStatusReportState(u.update, client.StatusFailure), false
 	}
 
-	if err := c.InstallUpdate(u.imagein, u.size); err != nil {
+	if err := c.StoreUpdate(u.imagein, u.size); err != nil {
 		log.Errorf("update install failed: %s", err)
 		return NewFetchStoreRetryState(u, u.update, err), false
 	}
@@ -742,7 +678,7 @@ func (is *UpdateInstallState) Handle(ctx *StateContext, c Controller) (State, bo
 	}
 
 	// if install was successful mark inactive partition as active one
-	if err := c.EnableUpdatedPartition(); err != nil {
+	if err := c.InstallUpdate(); err != nil {
 		return NewUpdateErrorState(NewTransientError(err), is.Update()), false
 	}
 
@@ -1103,7 +1039,7 @@ func (res *ReportErrorState) Handle(ctx *StateContext, c Controller) (State, boo
 	switch res.updateStatus {
 	case client.StatusSuccess:
 		// error while reporting success; rollback
-		return NewRollbackState(res.Update(), true, true), false
+		return NewRollbackState(res.Update(), true), false
 	case client.StatusFailure:
 		// error while reporting failure;
 		// start from scratch as previous update was broken
@@ -1145,14 +1081,14 @@ func (e *RebootState) Handle(ctx *StateContext, c Controller) (State, bool) {
 
 	merr := c.ReportUpdateStatus(e.Update(), client.StatusRebooting)
 	if merr != nil && merr.IsFatal() {
-		return NewRollbackState(e.Update(), true, false), false
+		return NewRollbackState(e.Update(), false), false
 	}
 
 	log.Info("rebooting device")
 
 	if err := c.Reboot(); err != nil {
 		log.Errorf("error rebooting device: %v", err)
-		return NewRollbackState(e.Update(), true, false), false
+		return NewRollbackState(e.Update(), false), false
 	}
 
 	// we can not reach this point
@@ -1179,20 +1115,17 @@ func (rs *AfterRebootState) Handle(ctx *StateContext,
 	// this state is needed to satisfy ToReboot transition Leave() action
 	log.Debug("handling state after reboot")
 
-	return NewUpdateVerifyState(rs.Update()), false
+	return NewUpdateCommitState(rs.Update()), false
 }
 
 type RollbackState struct {
 	UpdateState
-	swap   bool
 	reboot bool
 }
 
-func NewRollbackState(update client.UpdateResponse,
-	swapPartitions, doReboot bool) State {
+func NewRollbackState(update client.UpdateResponse, doReboot bool) State {
 	return &RollbackState{
 		UpdateState: NewUpdateState(MenderStateRollback, ToArtifactRollback, update),
-		swap:        swapPartitions,
 		reboot:      doReboot,
 	}
 }
@@ -1206,12 +1139,10 @@ func (rs *RollbackState) Handle(ctx *StateContext, c Controller) (State, bool) {
 
 	log.Info("performing rollback")
 
-	// swap active and inactive partitions and perform reboot
-	if rs.swap {
-		if err := c.SwapPartitions(); err != nil {
-			log.Errorf("rollback failed: %s", err)
-			return NewErrorState(NewFatalError(err)), false
-		}
+	// Roll back to original partition and perform reboot
+	if err := c.Rollback(); err != nil {
+		log.Errorf("rollback failed: %s", err)
+		return NewErrorState(NewFatalError(err)), false
 	}
 	if rs.reboot {
 		log.Debug("will try to rollback reboot the device")
@@ -1307,7 +1238,7 @@ func StoreStateData(store store.Store, sd StateData) error {
 	}
 	data, _ := json.Marshal(sd)
 
-	return store.WriteAll(stateDataKey, data)
+	return store.WriteAll(datastore.StateDataKey, data)
 }
 
 func LoadStateData(store store.Store) (StateData, error) {

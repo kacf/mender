@@ -467,7 +467,7 @@ func handleCLIOptions(runOptions runOptionsType, env *uBootEnv, device *device, 
 			log.Errorf("Unable to verify the existing hardware. Update will continue anyways: %v : %v", defaultDeviceTypeFile, err)
 		}
 		vKey := config.GetVerificationKey()
-		return doRootfs(device, runOptions, dt, vKey)
+		return doRootfs(device, runOptions, dt, vKey, config)
 
 	case *runOptions.commit:
 		return device.CommitUpdate()

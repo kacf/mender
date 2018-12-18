@@ -24,7 +24,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-type menderConfig struct {
+type menderConfigFromFile struct {
 	// ClientProtocol "https"
 	ClientProtocol string
 	// Path to the public key used to verify signed updates
@@ -65,6 +65,22 @@ type menderConfig struct {
 	Servers []client.MenderServer
 }
 
+type menderConfig struct {
+	menderConfigFromFile
+
+	// Additional fields that are in our config struct for convenience, but
+	// not actually configurable via the config file.
+	ModulesPath     string
+	ModulesWorkPath string
+}
+
+func NewMenderConfig() *menderConfig {
+	return &menderConfig{
+		ModulesPath: defaultModulesPath,
+		ModulesWorkPath: defaultModulesWorkPath,
+	}
+}
+
 // loadConfig parses the mender configuration json-files
 // (/etc/mender/mender.conf and /var/lib/mender/mender.conf) and loads the
 // values into the menderConfig structure defining high level client
@@ -77,13 +93,13 @@ func loadConfig(mainConfigFile string, fallbackConfigFile string) (*menderConfig
 	// override those from the fallback file, for options present in both files.
 
 	var filesLoadedCount int
-	var config menderConfig
+	config := NewMenderConfig()
 
-	if loadErr := loadConfigFile(fallbackConfigFile, &config, &filesLoadedCount); loadErr != nil {
+	if loadErr := loadConfigFile(fallbackConfigFile, config, &filesLoadedCount); loadErr != nil {
 		return nil, loadErr
 	}
 
-	if loadErr := loadConfigFile(mainConfigFile, &config, &filesLoadedCount); loadErr != nil {
+	if loadErr := loadConfigFile(mainConfigFile, config, &filesLoadedCount); loadErr != nil {
 		return nil, loadErr
 	}
 
@@ -119,7 +135,7 @@ func loadConfig(mainConfigFile string, fallbackConfigFile string) (*menderConfig
 
 	log.Debugf("Merged configuration = %#v", config)
 
-	return &config, nil
+	return config, nil
 }
 
 func loadConfigFile(configFile string, config *menderConfig, filesLoadedCount *int) error {
@@ -130,7 +146,7 @@ func loadConfigFile(configFile string, config *menderConfig, filesLoadedCount *i
 		return nil
 	}
 
-	if err := readConfigFile(&config, configFile); err != nil {
+	if err := readConfigFile(&config.menderConfigFromFile, configFile); err != nil {
 		log.Errorf("Error loading configuration from file: %s (%s)", configFile, err.Error())
 		return err
 	}

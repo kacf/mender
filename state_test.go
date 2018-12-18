@@ -35,8 +35,6 @@ type stateTestController struct {
 	artifactName    string
 	pollIntvl       time.Duration
 	retryIntvl      time.Duration
-	hasUpgrade      bool
-	hasUpgradeErr   menderError
 	state           State
 	updateResp      *client.UpdateResponse
 	updateRespErr   menderError
@@ -68,10 +66,6 @@ func (s *stateTestController) GetInventoryPollInterval() time.Duration {
 
 func (s *stateTestController) GetRetryPollInterval() time.Duration {
 	return s.retryIntvl
-}
-
-func (s *stateTestController) HasUpgrade() (bool, menderError) {
-	return s.hasUpgrade, s.hasUpgradeErr
 }
 
 func (s *stateTestController) CheckUpdate() (*client.UpdateResponse, menderError) {
@@ -412,7 +406,9 @@ func TestStateInit(t *testing.T) {
 		store: ms,
 	}
 	s, c = i.Handle(&ctx, &stateTestController{
-		hasUpgrade: false,
+		fakeDevice: fakeDevice{
+			retHasUpdate: false,
+		},
 	})
 	assert.IsType(t, &IdleState{}, s)
 	assert.False(t, c)
@@ -430,7 +426,9 @@ func TestStateInit(t *testing.T) {
 	// have state data and have correct artifact name
 	s, c = i.Handle(&ctx, &stateTestController{
 		artifactName: "fakeid",
-		hasUpgrade:   true,
+		fakeDevice: fakeDevice{
+			retHasUpdate: true,
+		},
 	})
 	assert.IsType(t, &AfterRebootState{}, s)
 	uvs := s.(*AfterRebootState)
@@ -448,7 +446,11 @@ func TestStateInit(t *testing.T) {
 	StoreStateData(ms, StateData{
 		UpdateInfo: update,
 	})
-	s, c = i.Handle(&ctx, &stateTestController{hasUpgrade: false})
+	s, c = i.Handle(&ctx, &stateTestController{
+		fakeDevice: fakeDevice{
+			retHasUpdate: false,
+		},
+	})
 	assert.IsType(t, &UpdateErrorState{}, s)
 	use, _ := s.(*UpdateErrorState)
 	assert.Equal(t, update, use.update)
@@ -458,7 +460,11 @@ func TestStateInit(t *testing.T) {
 		UpdateInfo: update,
 		Name:       MenderStateUpdateCommit,
 	})
-	ctrl := &stateTestController{hasUpgrade: false}
+	ctrl := &stateTestController{
+		fakeDevice: fakeDevice{
+			retHasUpdate: false,
+		},
+	}
 	s, c = i.Handle(&ctx, ctrl)
 	assert.IsType(t, &IdleState{}, s)
 	assert.False(t, c)
@@ -540,67 +546,6 @@ func TestStateAuthorizeWait(t *testing.T) {
 	assert.IsType(t, &AuthorizeWaitState{}, s)
 	assert.True(t, c)
 	assert.WithinDuration(t, tend, tstart, 5*time.Millisecond)
-}
-
-func TestUpdateVerifyState(t *testing.T) {
-
-	// create directory for storing deployments logs
-	tempDir, _ := ioutil.TempDir("", "logs")
-	defer os.RemoveAll(tempDir)
-	DeploymentLogger = NewDeploymentLogManager(tempDir)
-
-	// pretend we have state data
-	update := client.UpdateResponse{
-		ID: "foobar",
-	}
-	update.Artifact.ArtifactName = "fakeid"
-
-	s := NewUpdateVerifyState(update)
-	_, ok := s.(UpdateState)
-	assert.True(t, ok)
-
-	uvs := UpdateVerifyState{
-		UpdateState: NewUpdateState(MenderStateUpdateVerify, ToNone, update),
-	}
-
-	// HasUpgrade() failed
-	s, c := uvs.Handle(nil, &stateTestController{
-		hasUpgradeErr: NewFatalError(errors.New("upgrade err")),
-	})
-	assert.IsType(t, &UpdateErrorState{}, s)
-	ues := s.(*UpdateErrorState)
-	assert.Equal(t, update, ues.update)
-	assert.False(t, c)
-
-	// pretend artifact name is different from expected; rollback happened
-	s, c = uvs.Handle(nil, &stateTestController{
-		hasUpgrade:   true,
-		artifactName: "not-fakeid",
-	})
-	assert.IsType(t, &UpdateCommitState{}, s)
-	assert.False(t, c)
-
-	// Test upgrade available and no artifact-file found
-	s, c = uvs.Handle(nil, &stateTestController{
-		hasUpgrade: true,
-	})
-	assert.IsType(t, &UpdateCommitState{}, s)
-	assert.False(t, c)
-
-	// artifact name is as expected; update was successful
-	s, c = uvs.Handle(nil, &stateTestController{
-		hasUpgrade:   true,
-		artifactName: "fakeid",
-	})
-	assert.IsType(t, &UpdateCommitState{}, s)
-	assert.False(t, c)
-
-	// we should continue reporting have upgrade flag is not set
-	s, _ = uvs.Handle(nil, &stateTestController{
-		hasUpgrade:   false,
-		artifactName: "fakeid",
-	})
-	assert.IsType(t, &RollbackState{}, s)
 }
 
 func TestStateUpdateCommit(t *testing.T) {
@@ -920,7 +865,7 @@ func TestStateUpdateInstallRetry(t *testing.T) {
 	}
 	stc := stateTestController{
 		fakeDevice: fakeDevice{
-			retInstallUpdate: NewFatalError(errors.New("install failed")),
+			retStoreUpdate: NewFatalError(errors.New("install failed")),
 		},
 		pollIntvl: 5 * time.Minute,
 	}
@@ -1005,7 +950,7 @@ func TestStateRollback(t *testing.T) {
 	update := client.UpdateResponse{
 		ID: "foo",
 	}
-	rs := NewRollbackState(update, true, false)
+	rs := NewRollbackState(update, false)
 
 	// create directory for storing deployments logs
 	tempDir, _ := ioutil.TempDir("", "logs")

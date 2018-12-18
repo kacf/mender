@@ -29,12 +29,11 @@ import (
 
 type fakeDevice struct {
 	retReboot         error
-	retInstallUpdate  error
+	retStoreUpdate  error
 	retEnablePart     error
 	retCommit         error
 	retRollback       error
 	retHasUpdate      bool
-	retHasUpdateError error
 	consumeUpdate     bool
 }
 
@@ -42,19 +41,19 @@ func (f fakeDevice) Reboot() error {
 	return f.retReboot
 }
 
-func (f fakeDevice) SwapPartitions() error {
+func (f fakeDevice) Rollback() error {
 	return f.retRollback
 }
 
-func (f fakeDevice) InstallUpdate(from io.ReadCloser, sz int64) error {
+func (f fakeDevice) StoreUpdate(from io.ReadCloser, sz int64) error {
 	if f.consumeUpdate {
 		_, err := io.Copy(ioutil.Discard, from)
 		return err
 	}
-	return f.retInstallUpdate
+	return f.retStoreUpdate
 }
 
-func (f fakeDevice) EnableUpdatedPartition() error {
+func (f fakeDevice) InstallUpdate() error {
 	return f.retEnablePart
 }
 
@@ -62,8 +61,20 @@ func (f fakeDevice) CommitUpdate() error {
 	return f.retCommit
 }
 
-func (f fakeDevice) HasUpdate() (bool, error) {
-	return f.retHasUpdate, f.retHasUpdateError
+func (f fakeDevice) VerifyReboot() error {
+	if f.retHasUpdate {
+		return nil
+	} else {
+		return errors.New("No update")
+	}
+}
+
+func (f fakeDevice) VerifyRollbackReboot() error {
+	if f.retHasUpdate {
+		return errors.New("Not able to roll back")
+	} else {
+		return nil
+	}
 }
 
 type fakeUpdater struct {

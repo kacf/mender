@@ -28,8 +28,19 @@ import (
 )
 
 type UInstaller interface {
-	InstallUpdate(io.ReadCloser, int64) error
-	EnableUpdatedPartition() error
+	StoreUpdate(io.ReadCloser, int64) error
+	InstallUpdate() error
+}
+
+type UInstallCommitRebooter interface {
+	installer.UInstaller
+	CommitUpdate() error
+	Reboot() error
+	Rollback() error
+	// Verify that rebooting into the new update worked.
+	VerifyReboot() error
+	// Verify that rebooting into the old update worked.
+	VerifyRollbackReboot() error
 }
 
 func Install(art io.ReadCloser, dt string, key []byte,
@@ -129,11 +140,11 @@ func Install(art io.ReadCloser, dt string, key []byte,
 }
 
 func registerHandlers(ar *areader.Reader, device UInstaller) error {
+	// Built-in rootfs handler.
 	rootfs := handlers.NewRootfsInstaller()
-
 	rootfs.InstallHandler = func(r io.Reader, df *handlers.DataFile) error {
 		log.Debugf("installing update %v of size %v", df.Name, df.Size)
-		err := device.InstallUpdate(ioutil.NopCloser(r), df.Size)
+		err := device.StoreUpdate(ioutil.NopCloser(r), df.Size)
 		if err != nil {
 			log.Errorf("update image installation failed: %v", err)
 			return err
@@ -145,6 +156,7 @@ func registerHandlers(ar *areader.Reader, device UInstaller) error {
 		return errors.Wrap(err, "failed to register rootfs install handler")
 	}
 
+	// Update modules.
 	updateTypes := []string{"test-type"}
 	for _, updateType := range updateTypes {
 		module := NewModuleInstaller(updateType)

@@ -305,7 +305,9 @@ func TestMainBootstrap(t *testing.T) {
 	// setup test config
 	cpath := path.Join(tdir, "mender.config")
 	writeConfig(t, cpath, menderConfig{
-		Servers: []client.MenderServer{{ServerURL: ts.URL}},
+		menderConfigFromFile: menderConfigFromFile{
+			Servers: []client.MenderServer{{ServerURL: ts.URL}},
+		},
 	})
 
 	// override identity helper script

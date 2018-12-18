@@ -221,6 +221,7 @@ func (m *MenderState) UnmarshalJSON(data []byte) error {
 }
 
 type mender struct {
+	dualRootfsDevice    UInstallCommitRebooter
 	updater             client.Updater
 	state               State
 	stateScriptExecutor statescript.Executor
@@ -236,8 +237,9 @@ type mender struct {
 }
 
 type MenderPieces struct {
-	store   store.Store
-	authMgr AuthManager
+	dualRootfsDevice UInstallCommitRebooter
+	store            store.Store
+	authMgr          AuthManager
 }
 
 func NewMender(config menderConfig, pieces MenderPieces) (*mender, error) {
@@ -256,17 +258,18 @@ func NewMender(config menderConfig, pieces MenderPieces) (*mender, error) {
 	}
 
 	m := &mender{
-		updater:                client.NewUpdate(),
-		artifactInfoFile:       defaultArtifactInfoFile,
-		deviceTypeFile:         defaultDeviceTypeFile,
-		state:                  initState,
-		config:                 config,
-		authMgr:                pieces.authMgr,
-		authReq:                client.NewAuth(),
-		api:                    api,
-		authToken:              noAuthToken,
-		stateScriptExecutor:    stateScrExec,
-		stateScriptPath:        defaultArtScriptsPath,
+		dualRootfsDevice:    pieces.dualRootfsDevice,
+		updater:             client.NewUpdate(),
+		artifactInfoFile:    defaultArtifactInfoFile,
+		deviceTypeFile:      defaultDeviceTypeFile,
+		state:               initState,
+		config:              config,
+		authMgr:             pieces.authMgr,
+		authReq:             client.NewAuth(),
+		api:                 api,
+		authToken:           noAuthToken,
+		stateScriptExecutor: stateScrExec,
+		stateScriptPath:     defaultArtScriptsPath,
 	}
 
 	if m.authMgr != nil {
@@ -839,6 +842,6 @@ func (m *mender) StoreUpdate(from io.ReadCloser, size int64) error {
 		m.stateScriptPath,
 		m.config.ModulesPath,
 		m.config.ModulesWorkPath,
-		m.UInstallCommitRebooter,
+		m.dualRootfsDevice,
 		true)
 }

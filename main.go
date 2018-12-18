@@ -391,14 +391,14 @@ func commonInit(config *menderConfig, opts *runOptionsType) (*MenderPieces, erro
 	return &mp, nil
 }
 
-func initDaemon(config *menderConfig, dev *device, env BootEnvReadWriter,
+func initDaemon(config *menderConfig, dev *dualRootfsDevice, env BootEnvReadWriter,
 	opts *runOptionsType) (*menderDaemon, error) {
 
 	mp, err := commonInit(config, opts)
 	if err != nil {
 		return nil, err
 	}
-	mp.device = dev
+	mp.dualRootfsDevice = dev
 
 	controller, err := NewMender(*config, *mp)
 	if controller == nil {
@@ -482,7 +482,7 @@ func handleCLIOptions(runOptions runOptionsType, env *uBootEnv, dualRootfsDevice
 		return doBootstrapAuthorize(config, &runOptions)
 
 	case *runOptions.daemon:
-		d, err := initDaemon(config, device, env, &runOptions)
+		d, err := initDaemon(config, dualRootfsDevice, env, &runOptions)
 		if err != nil {
 			return err
 		}

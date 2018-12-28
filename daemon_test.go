@@ -145,7 +145,7 @@ type daemonTestController struct {
 	updateCheckCount int
 }
 
-func (d *daemonTestController) CheckUpdate() (*client.UpdateResponse, menderError) {
+func (d *daemonTestController) CheckUpdate() (*datastore.UpdateInfo, menderError) {
 	d.updateCheckCount++
 	return d.stateTestController.CheckUpdate()
 }

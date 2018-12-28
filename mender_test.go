@@ -499,7 +499,7 @@ func TestMenderReportStatus(t *testing.T) {
 
 	// 1. successful report
 	err = mender.ReportUpdateStatus(
-		client.UpdateResponse{
+		datastore.UpdateInfo{
 			ID: "foobar",
 		},
 		client.StatusSuccess,
@@ -512,7 +512,7 @@ func TestMenderReportStatus(t *testing.T) {
 	srv.Auth.Token = []byte("footoken")
 	srv.Auth.Verify = true
 	err = mender.ReportUpdateStatus(
-		client.UpdateResponse{
+		datastore.UpdateInfo{
 			ID: "foobar",
 		},
 		client.StatusSuccess,
@@ -527,7 +527,7 @@ func TestMenderReportStatus(t *testing.T) {
 	srv.Auth.Verify = true
 	srv.Status.Aborted = true
 	err = mender.ReportUpdateStatus(
-		client.UpdateResponse{
+		datastore.UpdateInfo{
 			ID: "foobar",
 		},
 		client.StatusSuccess,
@@ -569,7 +569,7 @@ func TestMenderLogUpload(t *testing.T) {
 }`)
 
 	err = mender.UploadLog(
-		client.UpdateResponse{
+		datastore.UpdateInfo{
 			ID: "foobar",
 		},
 		logs,
@@ -592,7 +592,7 @@ func TestMenderLogUpload(t *testing.T) {
 	// 2. pretend authorization fails, server expects a different token
 	srv.Auth.Token = []byte("footoken")
 	err = mender.UploadLog(
-		client.UpdateResponse{
+		datastore.UpdateInfo{
 			ID: "foobar",
 		},
 		logs,
@@ -1068,7 +1068,7 @@ func TestFailoverServers(t *testing.T) {
 		DeviceType: "dev",
 	}
 	srv2.Update.Has = true
-	srv2.Update.Data = client.UpdateResponse{
+	srv2.Update.Data = datastore.UpdateInfo{
 		ID: "foo",
 	}
 	// Create mender- and menderConfig structs

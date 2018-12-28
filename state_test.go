@@ -36,15 +36,15 @@ type stateTestController struct {
 	pollIntvl       time.Duration
 	retryIntvl      time.Duration
 	state           State
-	updateResp      *client.UpdateResponse
+	updateResp      *datastore.UpdateInfo
 	updateRespErr   menderError
 	authorized      bool
 	authorizeErr    menderError
 	reportError     menderError
 	logSendingError menderError
 	reportStatus    string
-	reportUpdate    client.UpdateResponse
-	logUpdate       client.UpdateResponse
+	reportUpdate    datastore.UpdateInfo
+	logUpdate       datastore.UpdateInfo
 	logs            []byte
 	inventoryErr    error
 }
@@ -68,7 +68,7 @@ func (s *stateTestController) GetRetryPollInterval() time.Duration {
 	return s.retryIntvl
 }
 
-func (s *stateTestController) CheckUpdate() (*client.UpdateResponse, menderError) {
+func (s *stateTestController) CheckUpdate() (*datastore.UpdateInfo, menderError) {
 	return s.updateResp, s.updateRespErr
 }
 
@@ -98,13 +98,13 @@ func (s *stateTestController) IsAuthorized() bool {
 	return s.authorized
 }
 
-func (s *stateTestController) ReportUpdateStatus(update client.UpdateResponse, status string) menderError {
+func (s *stateTestController) ReportUpdateStatus(update datastore.UpdateInfo, status string) menderError {
 	s.reportUpdate = update
 	s.reportStatus = status
 	return s.reportError
 }
 
-func (s *stateTestController) UploadLog(update client.UpdateResponse, logs []byte) menderError {
+func (s *stateTestController) UploadLog(update datastore.UpdateInfo, logs []byte) menderError {
 	s.logUpdate = update
 	s.logs = logs
 	return s.logSendingError
@@ -216,7 +216,7 @@ func TestStateError(t *testing.T) {
 
 func TestStateUpdateError(t *testing.T) {
 
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foobar",
 	}
 	fooerr := NewTransientError(errors.New("foo"))
@@ -243,7 +243,7 @@ func TestStateUpdateError(t *testing.T) {
 }
 
 func TestStateUpdateReportStatus(t *testing.T) {
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foobar",
 	}
 
@@ -414,7 +414,7 @@ func TestStateInit(t *testing.T) {
 	assert.False(t, c)
 
 	// pretend we have state data
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foobar",
 	}
 	update.Artifact.ArtifactName = "fakeid"
@@ -554,7 +554,7 @@ func TestStateUpdateCommit(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 	DeploymentLogger = NewDeploymentLogManager(tempDir)
 
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foobar",
 	}
 	cs := NewUpdateCommitState(update)
@@ -653,7 +653,7 @@ func TestStateUpdateCheck(t *testing.T) {
 	assert.False(t, c)
 
 	// pretend we have an update
-	update := &client.UpdateResponse{}
+	update := &datastore.UpdateInfo{}
 
 	s, c = cs.Handle(ctx, &stateTestController{
 		updateResp: update,
@@ -672,7 +672,7 @@ func TestUpdateCheckSameImage(t *testing.T) {
 	var c bool
 
 	// pretend we have an update
-	update := &client.UpdateResponse{
+	update := &datastore.UpdateInfo{
 		ID: "my-id",
 	}
 
@@ -694,7 +694,7 @@ func TestStateUpdateFetch(t *testing.T) {
 	DeploymentLogger = NewDeploymentLogManager(tempDir)
 
 	// pretend we have an update
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foobar",
 	}
 	cs := NewUpdateFetchState(update)
@@ -755,7 +755,7 @@ func TestStateUpdateFetch(t *testing.T) {
 
 func TestStateUpdateFetchRetry(t *testing.T) {
 	// pretend we have an update
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foobar",
 	}
 	cs := NewUpdateFetchState(update)
@@ -808,7 +808,7 @@ func TestStateUpdateStore(t *testing.T) {
 	data := "test"
 	stream := ioutil.NopCloser(bytes.NewBufferString(data))
 
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foo",
 	}
 	uis := NewUpdateStoreState(stream, int64(len(data)), update)
@@ -853,7 +853,7 @@ func TestStateUpdateInstallRetry(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 	DeploymentLogger = NewDeploymentLogManager(tempDir)
 
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foo",
 	}
 	data := "test"
@@ -910,7 +910,7 @@ func TestStateUpdateInstallRetry(t *testing.T) {
 }
 
 func TestStateReboot(t *testing.T) {
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foo",
 	}
 	rs := NewRebootState(update)
@@ -947,7 +947,7 @@ func TestStateReboot(t *testing.T) {
 }
 
 func TestStateRollback(t *testing.T) {
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foo",
 	}
 	rs := NewRollbackState(update, false)
@@ -982,7 +982,7 @@ func TestStateData(t *testing.T) {
 	sd := StateData{
 		Version: stateDataVersion,
 		Name:    MenderStateInit,
-		UpdateInfo: client.UpdateResponse{
+		UpdateInfo: datastore.UpdateInfo{
 			ID: "foobar",
 		},
 	}
@@ -1012,7 +1012,7 @@ func TestStateData(t *testing.T) {
 }
 
 func TestStateReportError(t *testing.T) {
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		ID: "foobar",
 	}
 

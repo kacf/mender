@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/mendersoftware/log"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/pkg/errors"
 )
 
@@ -126,32 +127,7 @@ func (u *UpdateClient) FetchUpdate(api ApiRequester, url string, maxWait time.Du
 	return NewUpdateResumer(r.Body, r.ContentLength, maxWait, api, req), r.ContentLength, nil
 }
 
-// have update for the client
-type UpdateResponse struct {
-	Artifact struct {
-		Source struct {
-			URI    string
-			Expire string
-		}
-		CompatibleDevices []string `json:"device_types_compatible"`
-		ArtifactName      string   `json:"artifact_name"`
-	}
-	ID string
-}
-
-func (ur UpdateResponse) CompatibleDevices() []string {
-	return ur.Artifact.CompatibleDevices
-}
-
-func (ur UpdateResponse) ArtifactName() string {
-	return ur.Artifact.ArtifactName
-}
-
-func (ur UpdateResponse) URI() string {
-	return ur.Artifact.Source.URI
-}
-
-func validateGetUpdate(update UpdateResponse) error {
+func validateGetUpdate(update datastore.UpdateInfo) error {
 	// check if we have JSON data correctly decoded
 	if update.ID == "" ||
 		len(update.Artifact.CompatibleDevices) == 0 ||
@@ -179,7 +155,7 @@ func processUpdateResponse(response *http.Response) (interface{}, error) {
 	case http.StatusOK:
 		log.Debug("Have update available")
 
-		var data UpdateResponse
+		var data datastore.UpdateInfo
 		if err := json.Unmarshal(respBody, &data); err != nil {
 			return nil, errors.Wrapf(err, "failed to parse response")
 		}

@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/mendersoftware/mender/client"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -102,7 +103,7 @@ func TestTransitions(t *testing.T) {
 	st := store.NewDBStore(tdir)
 	require.Nil(t, StoreStateData(st, StateData{
 		Name:       MenderStateInit,
-		UpdateInfo: client.UpdateResponse{},
+		UpdateInfo: datastore.UpdateInfo{},
 	}))
 
 	tc := []struct {
@@ -271,7 +272,7 @@ func (sexec *stateScriptReportExecutor) CheckRootfsScriptsVersion() error {
 
 func TestTransitionReporting(t *testing.T) {
 
-	update := client.UpdateResponse{
+	update := datastore.UpdateInfo{
 		Artifact: struct {
 			Source struct {
 				URI    string

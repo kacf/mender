@@ -26,11 +26,12 @@ import (
 
 	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender/client"
+	"github.com/mendersoftware/mender/datastore"
 )
 
 type updateType struct {
 	Has          bool
-	Data         client.UpdateResponse
+	Data         datastore.UpdateInfo
 	Unauthorized bool
 	Called       bool
 	Current      client.CurrentUpdate

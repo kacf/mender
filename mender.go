@@ -26,6 +26,7 @@ import (
 	"github.com/mendersoftware/log"
 
 	"github.com/mendersoftware/mender/client"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/installer"
 	"github.com/mendersoftware/mender/statescript"
 	"github.com/mendersoftware/mender/store"
@@ -46,14 +47,15 @@ type Controller interface {
 	GetUpdatePollInterval() time.Duration
 	GetInventoryPollInterval() time.Duration
 	GetRetryPollInterval() time.Duration
-	CheckUpdate() (*client.UpdateResponse, menderError)
+	CheckUpdate() (*datastore.UpdateInfo, menderError)
 	FetchUpdate(url string) (io.ReadCloser, int64, error)
-	ReportUpdateStatus(update client.UpdateResponse, status string) menderError
-	UploadLog(update client.UpdateResponse, logs []byte) menderError
+	ReportUpdateStatus(update datastore.UpdateInfo, status string) menderError
+	UploadLog(update datastore.UpdateInfo, logs []byte) menderError
 	InventoryRefresh() error
 	CheckScriptsCompatibility() error
 
-	installer.UInstallCommitRebooter
+	GetInstallers() []installer.UInstallCommitRebooter
+
 	StateRunner
 }
 
@@ -73,155 +75,37 @@ var (
 	errNoArtifactName = errors.New("cannot determine current artifact name")
 )
 
-type MenderState int
-
-// Do not change the order or remove any of these constants, since they are
-// stored in the database. Only add to the end.
-const (
-	// initial state
-	MenderStateInit MenderState = iota
-	// idle state; waiting for transition to the new state
-	MenderStateIdle
-	// client is bootstrapped, i.e. ready to go
-	MenderStateAuthorize
-	// wait before authorization attempt
-	MenderStateAuthorizeWait
-	// inventory update
-	MenderStateInventoryUpdate
-	// wait for new update or inventory sending
-	MenderStateCheckWait
-	// check update
-	MenderStateUpdateCheck
-	// update fetch
-	MenderStateUpdateFetch
-	// update store
-	MenderStateUpdateStore
-	// install update
-	MenderStateUpdateInstall
-	// wait before retrying fetch & install after first failing (timeout,
-	// for example)
-	MenderStateFetchStoreRetryWait
-	// varify update
-	MenderStateUpdateVerify
-	// commit needed
-	MenderStateUpdateCommit
-	// status report
-	MenderStateUpdateStatusReport
-	// wait before retrying sending either report or deployment logs
-	MenderStatusReportRetryState
-	// error reporting status
-	MenderStateReportStatusError
-	// reboot
-	MenderStateReboot
-	// first state after booting device after rollback reboot
-	MenderStateAfterReboot
-	//rollback
-	MenderStateRollback
-	// reboot after rollback
-	MenderStateRollbackReboot
-	// first state after booting device after rollback reboot
-	MenderStateAfterRollbackReboot
-	// error
-	MenderStateError
-	// update error
-	MenderStateUpdateError
-	// exit state
-	MenderStateDone
-)
-
 var (
-	stateNames = map[MenderState]string{
-		MenderStateInit:                "init",
-		MenderStateIdle:                "idle",
-		MenderStateAuthorize:           "authorize",
-		MenderStateAuthorizeWait:       "authorize-wait",
-		MenderStateInventoryUpdate:     "inventory-update",
-		MenderStateCheckWait:           "check-wait",
-		MenderStateUpdateCheck:         "update-check",
-		MenderStateUpdateFetch:         "update-fetch",
-		MenderStateUpdateStore:         "update-store",
-		MenderStateUpdateInstall:       "update-install",
-		MenderStateFetchStoreRetryWait: "fetch-install-retry-wait",
-		MenderStateUpdateVerify:        "update-verify",
-		MenderStateUpdateCommit:        "update-commit",
-		MenderStateUpdateStatusReport:  "update-status-report",
-		MenderStatusReportRetryState:   "update-retry-report",
-		MenderStateReportStatusError:   "status-report-error",
-		MenderStateReboot:              "reboot",
-		MenderStateAfterReboot:         "after-reboot",
-		MenderStateRollback:            "rollback",
-		MenderStateRollbackReboot:      "rollback-reboot",
-		MenderStateAfterRollbackReboot: "after-rollback-reboot",
-		MenderStateError:               "error",
-		MenderStateUpdateError:         "update-error",
-		MenderStateDone:                "finished",
-	}
-
 	//IMPORTANT: make sure that all the statuses that require
 	// the report to be sent to the backend are assigned here.
 	// See shouldReportUpdateStatus() function for how we are
 	// deciding if report needs to be send to the backend.
-	stateStatus = map[MenderState]string{
-		MenderStateInit:                "",
-		MenderStateIdle:                "",
-		MenderStateAuthorize:           "",
-		MenderStateAuthorizeWait:       "",
-		MenderStateInventoryUpdate:     "",
-		MenderStateCheckWait:           "",
-		MenderStateUpdateCheck:         "",
-		MenderStateUpdateFetch:         client.StatusDownloading,
-		MenderStateUpdateStore:         client.StatusDownloading,
-		MenderStateUpdateInstall:       client.StatusInstalling,
-		MenderStateFetchStoreRetryWait: "",
-		MenderStateUpdateVerify:        client.StatusRebooting,
-		MenderStateUpdateCommit:        client.StatusRebooting,
-		MenderStateUpdateStatusReport:  "",
-		MenderStatusReportRetryState:   "",
-		MenderStateReportStatusError:   "",
-		MenderStateReboot:              client.StatusRebooting,
-		MenderStateAfterReboot:         client.StatusRebooting,
-		MenderStateRollback:            client.StatusRebooting,
-		MenderStateRollbackReboot:      client.StatusRebooting,
-		MenderStateAfterRollbackReboot: client.StatusRebooting,
-		MenderStateError:               "",
-		MenderStateUpdateError:         client.StatusFailure,
-		MenderStateDone:                "",
+	stateStatus = map[datastore.MenderState]string{
+		datastore.MenderStateUpdateFetch:         StatusDownloading,
+		datastore.MenderStateUpdateStore:         StatusDownloading,
+		datastore.MenderStateUpdateInstall:       StatusInstalling,
+		datastore.MenderStateUpdateVerify:        StatusRebooting,
+		datastore.MenderStateUpdateCommit:        StatusRebooting,
+		datastore.MenderStateReboot:              StatusRebooting,
+		datastore.MenderStateAfterReboot:         StatusRebooting,
+		datastore.MenderStateRollback:            StatusRebooting,
+		datastore.MenderStateRollbackReboot:      StatusRebooting,
+		datastore.MenderStateAfterRollbackReboot: StatusRebooting,
+		datastore.MenderStateUpdateError:         StatusFailure,
 	}
 )
 
-func (m MenderState) Status() string {
-	return stateStatus[m]
-}
-
-func (m MenderState) MarshalJSON() ([]byte, error) {
-	n, ok := stateNames[m]
-	if !ok {
-		return nil, fmt.Errorf("marshal error; unknown state %v", m)
+func StateStatus(m datastore.MenderState) string {
+	status, ok := stateStatus[m]
+	if ok {
+		return status
+	} else {
+		return ""
 	}
-	return json.Marshal(n)
-}
-
-func (m MenderState) String() string {
-	return stateNames[m]
-}
-
-func (m *MenderState) UnmarshalJSON(data []byte) error {
-	var s string
-	err := json.Unmarshal(data, &s)
-	if err != nil {
-		return err
-	}
-	for k, v := range stateNames {
-		if v == s {
-			*m = k
-			return nil
-		}
-	}
-	return fmt.Errorf("unmarshal error; unknown state %s", s)
 }
 
 type mender struct {
-	dualRootfsDevice    UInstallCommitRebooter
+	dualRootfsDevice    *dualRootfsDevice
 	updater             client.Updater
 	state               State
 	stateScriptExecutor statescript.Executor
@@ -237,7 +121,7 @@ type mender struct {
 }
 
 type MenderPieces struct {
-	dualRootfsDevice UInstallCommitRebooter
+	dualRootfsDevice *dualRootfsDevice
 	store            store.Store
 	authMgr          AuthManager
 }
@@ -463,9 +347,9 @@ func (m *mender) FetchUpdate(url string) (io.ReadCloser, int64, error) {
 }
 
 // Check if new update is available. In case of errors, returns nil and error
-// that occurred. If no update is available *UpdateResponse is nil, otherwise it
+// that occurred. If no update is available *UpdateInfo is nil, otherwise it
 // contains update information.
-func (m *mender) CheckUpdate() (*client.UpdateResponse, menderError) {
+func (m *mender) CheckUpdate() (*datastore.UpdateInfo, menderError) {
 	currentArtifactName, err := m.GetCurrentArtifactName()
 	if err != nil || currentArtifactName == "" {
 		log.Error("could not get the current artifact name")
@@ -501,7 +385,7 @@ func (m *mender) CheckUpdate() (*client.UpdateResponse, menderError) {
 		log.Debug("no updates available")
 		return nil, nil
 	}
-	update, ok := haveUpdate.(client.UpdateResponse)
+	update, ok := haveUpdate.(datastore.UpdateInfo)
 	if !ok {
 		return nil, NewTransientError(errors.Errorf("not an update response?"))
 	}
@@ -515,7 +399,7 @@ func (m *mender) CheckUpdate() (*client.UpdateResponse, menderError) {
 	return &update, nil
 }
 
-func (m *mender) ReportUpdateStatus(update client.UpdateResponse, status string) menderError {
+func (m *mender) ReportUpdateStatus(update datastore.UpdateInfo, status string) menderError {
 	s := client.NewStatus()
 	err := s.Report(m.api.Request(m.authToken, nextServerIterator(m), reauthorize(m)), m.config.Servers[0].ServerURL,
 		client.StatusReport{
@@ -614,7 +498,7 @@ func nextServerIterator(m *mender) func() *client.MenderServer {
 
 /* client closures END */
 
-func (m *mender) UploadLog(update client.UpdateResponse, logs []byte) menderError {
+func (m *mender) UploadLog(update datastore.UpdateInfo, logs []byte) menderError {
 	s := client.NewLog()
 	err := s.Upload(m.api.Request(m.authToken, nextServerIterator(m), reauthorize(m)), m.config.Servers[0].ServerURL,
 		client.LogData{
@@ -704,16 +588,16 @@ func TransitionError(s State, action string) State {
 	return NewErrorState(me)
 }
 
-func shouldReportUpdateStatus(state MenderState) bool {
-	return state.Status() != ""
+func shouldReportUpdateStatus(state datastore.MenderState) bool {
+	return StateStatus(state) != ""
 }
 
-func getUpdateFromState(state State) (client.UpdateResponse, error) {
+func getUpdateFromState(state State) (datastore.UpdateInfo, error) {
 	upd, ok := state.(UpdateState)
 	if ok {
 		return upd.Update(), nil
 	}
-	return client.UpdateResponse{},
+	return datastore.UpdateInfo{},
 		errors.Errorf("failed to extract the update from state: %s", state)
 }
 
@@ -739,7 +623,7 @@ func (m *mender) TransitionState(to State, ctx *StateContext) (State, bool) {
 				URL: m.config.Servers[0].ServerURL,
 				Report: client.StatusReport{
 					DeploymentID: upd.ID,
-					Status:       to.Id().Status(),
+					Status:       StateStatus(to.Id()),
 				},
 			}
 		}
@@ -753,7 +637,7 @@ func (m *mender) TransitionState(to State, ctx *StateContext) (State, bool) {
 			// error happened. THIS IS IMPORTANT AS WE CAN SEND THE client.StatusFailure
 			// ONLY ONCE.
 			if report != nil {
-				report.Report.Status = from.Id().Status()
+				report.Report.Status = StateStatus(from.Id())
 			}
 			// call error scripts
 			from.Transition().Error(m.stateScriptExecutor, report)

@@ -15,25 +15,64 @@
 package installer
 
 import (
-	// "io"
-	// "os"
+	"io"
 
 	"github.com/mendersoftware/mender-artifact/handlers"
 )
 
 type ModuleInstaller struct {
-	handlers.ModuleImage
-
+	payloadIndex    int
 	modulesPath     string
 	modulesWorkPath string
 }
 
-func NewModuleInstaller(updateType string) *ModuleInstaller {
+func NewModuleInstaller() *ModuleInstaller {
 	module := &ModuleInstaller{
 		ModuleImage: *handlers.NewModuleImage(updateType),
 	}
 	return module
 }
 
-// func (mod *ModuleInstaller) Install(r io.Reader, info *os.FileInfo) error {
-// }
+func (mod *ModuleInstaller) StoreUpdate(r io.ReadCloser, size int64) error {
+	return nil
+}
+
+func (mod *ModuleInstaller) InstallUpdate() error {
+	return nil
+}
+
+func (mod *ModuleInstaller) Reboot() error {
+	return nil
+}
+
+func (mod *ModuleInstaller) CommitUpdate() error {
+	return nil
+}
+
+func (mod *ModuleInstaller) Rollback() error {
+	return nil
+}
+
+func (mod *ModuleInstaller) VerifyReboot() error {
+	return nil
+}
+
+func (mod *ModuleInstaller) VerifyRollbackReboot() error {
+	return nil
+}
+
+type ModuleInstallerFactory struct {
+	modulesPath     string
+	modulesWorkPath string
+	installers      []*ModuleInstaller
+}
+
+func (mf *ModuleInstallerFactory) NewUpdateStorer(payloadNum int) (handlers.UpdateStorer, error) {
+	mod := &ModuleInstaller{
+		payloadIndex:     payloadNum,
+		modulesPath:      mf.modulesPath,
+		modulesWorkPath:  mf.modulesWorkPath,
+	}
+	mf.installers = append(mf.installers, mod)
+	return mod, nil
+}

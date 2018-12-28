@@ -58,8 +58,8 @@ func NewDualRootfsDevice(env BootEnvReadWriter, sc StatCommander, config dualRoo
 	dualRootfsDevice := dualRootfsDevice{
 		BootEnvReadWriter: env,
 		Commander: sc,
-		partitions: &partitions
-		rebooter: &systemRebooter{sc}
+		partitions: &partitions,
+		rebooter: &systemRebooter{sc},
 	}
 	return &dualRootfsDevice
 }

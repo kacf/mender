@@ -47,6 +47,11 @@ type UInstallCommitRebooter interface {
 	VerifyRollbackReboot() error
 }
 
+type ArtifactPayloadInstaller interface {
+	UInstallCommitRebooter
+	NewInstance(bucketNum int) (ArtifactPayloadInstaller, error)
+}
+
 func Install(art io.ReadCloser, dt string, key []byte,
 	scrDir, modulesDir, modulesWorkDir string,
 	dualRootfsDevice UInstaller, acceptStateScripts bool) error {
@@ -146,15 +151,18 @@ func Install(art io.ReadCloser, dt string, key []byte,
 func registerHandlers(ar *areader.Reader, dualRootfsDevice UInstaller) error {
 	// Built-in rootfs handler.
 	rootfs := handlers.NewRootfsInstaller()
-	rootfs.InstallHandler = func(r io.Reader, df *handlers.DataFile) error {
-		log.Debugf("installing update %v of size %v", df.Name, df.Size)
-		err := dualRootfsDevice.StoreUpdate(ioutil.NopCloser(r), df.Size)
+	rootfs.SetInstallHandler(func(r io.Reader, info os.FileInfo) error {
+		if dualRootfsDevice == nil {
+			return errors.New("No dual rootfs configuration present: Cannot install update")
+		}
+		log.Debugf("installing update %v of size %v", info.Name(), info.Size())
+		err := dualRootfsDevice.StoreUpdate(ioutil.NopCloser(r), info.Size())
 		if err != nil {
 			log.Errorf("update image installation failed: %v", err)
 			return err
 		}
 		return nil
-	}
+	})
 
 	if err := ar.RegisterHandler(rootfs); err != nil {
 		return errors.Wrap(err, "failed to register rootfs install handler")
@@ -163,8 +171,9 @@ func registerHandlers(ar *areader.Reader, dualRootfsDevice UInstaller) error {
 	// Update modules.
 	updateTypes := []string{"test-type"}
 	for _, updateType := range updateTypes {
-		module := NewModuleInstaller(updateType)
-		if err := ar.RegisterHandler(module); err != nil {
+		moduleImage := handlers.NewModuleImage(updateType)
+		moduleImage.SetInstallHandler(NewModuleInstaller())
+		if err := ar.RegisterHandler(moduleImage); err != nil {
 			return errors.Wrapf(err, "failed to register '%s' install handler",
 				updateType)
 		}

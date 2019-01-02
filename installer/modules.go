@@ -26,13 +26,6 @@ type ModuleInstaller struct {
 	modulesWorkPath string
 }
 
-func NewModuleInstaller() *ModuleInstaller {
-	module := &ModuleInstaller{
-		ModuleImage: *handlers.NewModuleImage(updateType),
-	}
-	return module
-}
-
 func (mod *ModuleInstaller) StoreUpdate(r io.ReadCloser, size int64) error {
 	return nil
 }

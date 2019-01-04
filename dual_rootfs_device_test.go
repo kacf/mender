@@ -17,6 +17,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -39,7 +40,7 @@ func (f *fakeBootEnv) WriteEnv(w BootVars) error {
 }
 
 func Test_commitUpdate(t *testing.T) {
-	dualRootfsDevice := dualRootfsDevice{}
+	dualRootfsDevice := dualRootfsDeviceImpl{}
 
 	dualRootfsDevice.BootEnvReadWriter = &fakeBootEnv{
 		readVars: BootVars{
@@ -80,7 +81,7 @@ func Test_enableUpdatedPartition_wrongPartitinNumber_fails(t *testing.T) {
 	testPart := partitions{}
 	testPart.inactive = "inactive"
 
-	testDevice := dualRootfsDevice{}
+	testDevice := dualRootfsDeviceImpl{}
 	testDevice.partitions = &testPart
 	testDevice.BootEnvReadWriter = &fakeEnv
 
@@ -96,7 +97,7 @@ func Test_enableUpdatedPartition_correctPartitinNumber(t *testing.T) {
 	testPart := partitions{}
 	testPart.inactive = "inactive2"
 
-	testDevice := dualRootfsDevice{}
+	testDevice := dualRootfsDeviceImpl{}
 	testDevice.partitions = &testPart
 	testDevice.BootEnvReadWriter = &fakeEnv
 
@@ -110,14 +111,37 @@ func Test_enableUpdatedPartition_correctPartitinNumber(t *testing.T) {
 	}
 }
 
+type sizeOnlyFileInfo struct {
+	size int64
+}
+
+func (s *sizeOnlyFileInfo) Name() string {
+	return ""
+}
+func (s *sizeOnlyFileInfo) Size() int64 {
+	return s.size
+}
+func (s *sizeOnlyFileInfo) Mode() os.FileMode {
+	return 0444
+}
+func (s *sizeOnlyFileInfo) ModTime() time.Time {
+	return time.Time{}
+}
+func (s *sizeOnlyFileInfo) IsDir() bool {
+	return false
+}
+func (s *sizeOnlyFileInfo) Sys() interface{} {
+	return nil
+}
+
 func Test_installUpdate_existingAndNonInactivePartition(t *testing.T) {
-	testDevice := dualRootfsDevice{}
+	testDevice := dualRootfsDeviceImpl{}
 
 	fakePartitions := partitions{}
 	fakePartitions.inactive = "/non/existing"
 	testDevice.partitions = &fakePartitions
 
-	if err := testDevice.StoreUpdate(nil, 0); err == nil {
+	if err := testDevice.StoreUpdate(nil, &sizeOnlyFileInfo{0}); err == nil {
 		t.FailNow()
 	}
 
@@ -138,12 +162,12 @@ func Test_installUpdate_existingAndNonInactivePartition(t *testing.T) {
 	BlockDeviceGetSizeOf = func(file *os.File) (uint64, error) { return uint64(len(imageContent)), nil }
 	BlockDeviceGetSectorSizeOf = func(file *os.File) (int, error) { return int(len(imageContent)), nil }
 
-	if err := testDevice.StoreUpdate(image, int64(len(imageContent))); err != nil {
+	if err := testDevice.StoreUpdate(image, &sizeOnlyFileInfo{int64(len(imageContent))}); err != nil {
 		t.FailNow()
 	}
 
 	BlockDeviceGetSizeOf = func(file *os.File) (uint64, error) { return 0, errors.New("") }
-	if err := testDevice.StoreUpdate(image, int64(len(imageContent))); err == nil {
+	if err := testDevice.StoreUpdate(image, &sizeOnlyFileInfo{int64(len(imageContent))}); err == nil {
 		t.FailNow()
 	}
 	BlockDeviceGetSizeOf = old
@@ -172,7 +196,7 @@ func Test_Rollback_OK(t *testing.T) {
 	testPart := partitions{}
 	testPart.inactive = "part2"
 
-	testDevice := dualRootfsDevice{}
+	testDevice := dualRootfsDeviceImpl{}
 	testDevice.partitions = &testPart
 	testDevice.BootEnvReadWriter = &fakeEnv
 
@@ -181,30 +205,28 @@ func Test_Rollback_OK(t *testing.T) {
 	}
 }
 
-func TestDeviceHasUpdate(t *testing.T) {
+func TestDeviceVerifyReboot(t *testing.T) {
 	runner := newTestOSCalls("", -1)
 	testDevice := NewDualRootfsDevice(
 		&uBootEnv{&runner},
 		nil,
 		dualRootfsDeviceConfig{})
-	has, err := testDevice.HasUpdate()
-	assert.Error(t, err)
+	err := testDevice.VerifyReboot()
+	assert.NoError(t, err)
 
 	runner = newTestOSCalls("upgrade_available=0", 0)
 	testDevice = NewDualRootfsDevice(
 		&uBootEnv{&runner},
 		nil,
 		dualRootfsDeviceConfig{})
-	has, err = testDevice.HasUpdate()
-	assert.False(t, has)
-	assert.NoError(t, err)
+	err = testDevice.VerifyReboot()
+	assert.Error(t, err)
 
 	runner = newTestOSCalls("upgrade_available=1", 0)
 	testDevice = NewDualRootfsDevice(
 		&uBootEnv{&runner},
 		nil,
 		dualRootfsDeviceConfig{})
-	has, err = testDevice.HasUpdate()
-	assert.True(t, has)
-	assert.NoError(t, err)
+	err = testDevice.VerifyReboot()
+	assert.Error(t, err)
 }

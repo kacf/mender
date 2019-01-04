@@ -25,6 +25,8 @@ import (
 
 	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender/client"
+	"github.com/mendersoftware/mender/datastore"
+	"github.com/mendersoftware/mender/installer"
 	"github.com/mendersoftware/mender/store"
 	"github.com/stretchr/testify/assert"
 )
@@ -98,14 +100,14 @@ func (s *stateTestController) IsAuthorized() bool {
 	return s.authorized
 }
 
-func (s *stateTestController) ReportUpdateStatus(update datastore.UpdateInfo, status string) menderError {
-	s.reportUpdate = update
+func (s *stateTestController) ReportUpdateStatus(update *datastore.UpdateInfo, status string) menderError {
+	s.reportUpdate = *update
 	s.reportStatus = status
 	return s.reportError
 }
 
-func (s *stateTestController) UploadLog(update datastore.UpdateInfo, logs []byte) menderError {
-	s.logUpdate = update
+func (s *stateTestController) UploadLog(update *datastore.UpdateInfo, logs []byte) menderError {
+	s.logUpdate = *update
 	s.logs = logs
 	return s.logSendingError
 }
@@ -116,6 +118,10 @@ func (s *stateTestController) InventoryRefresh() error {
 
 func (s *stateTestController) CheckScriptsCompatibility() error {
 	return nil
+}
+
+func (s *stateTestController) GetInstallers() []installer.UInstallCommitRebooter {
+	return []installer.UInstallCommitRebooter{}
 }
 
 type waitStateTest struct {
@@ -142,17 +148,17 @@ func (c *waitStateTest) Handle(*StateContext, Controller) (State, bool) {
 
 func TestStateBase(t *testing.T) {
 	bs := baseState{
-		id: MenderStateInit,
+		id: datastore.MenderStateInit,
 	}
 
-	assert.Equal(t, MenderStateInit, bs.Id())
+	assert.Equal(t, datastore.MenderStateInit, bs.Id())
 	assert.False(t, bs.Cancel())
 }
 
 func TestStateWait(t *testing.T) {
-	cs := NewWaitState(MenderStateAuthorizeWait, ToNone)
+	cs := NewWaitState(datastore.MenderStateAuthorizeWait, ToNone)
 
-	assert.Equal(t, MenderStateAuthorizeWait, cs.Id())
+	assert.Equal(t, datastore.MenderStateAuthorizeWait, cs.Id())
 
 	var s State
 	var c bool
@@ -196,7 +202,7 @@ func TestStateError(t *testing.T) {
 	fooerr := NewTransientError(errors.New("foo"))
 
 	es := NewErrorState(fooerr)
-	assert.Equal(t, MenderStateError, es.Id())
+	assert.Equal(t, datastore.MenderStateError, es.Id())
 	assert.IsType(t, &ErrorState{}, es)
 	errstate, _ := es.(*ErrorState)
 	assert.NotNil(t, errstate)
@@ -216,13 +222,13 @@ func TestStateError(t *testing.T) {
 
 func TestStateUpdateError(t *testing.T) {
 
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foobar",
 	}
 	fooerr := NewTransientError(errors.New("foo"))
 
 	es := NewUpdateErrorState(fooerr, update)
-	assert.Equal(t, MenderStateUpdateError, es.Id())
+	assert.Equal(t, datastore.MenderStateUpdateError, es.Id())
 	assert.IsType(t, &UpdateErrorState{}, es)
 	errstate, _ := es.(*UpdateErrorState)
 	assert.NotNil(t, errstate)
@@ -239,7 +245,7 @@ func TestStateUpdateError(t *testing.T) {
 	// verify that update status report state data is correct
 	usr, _ := s.(*UpdateStatusReportState)
 	assert.Equal(t, client.StatusFailure, usr.status)
-	assert.Equal(t, update, usr.Update())
+	assert.Equal(t, *update, *usr.Update())
 }
 
 func TestStateUpdateReportStatus(t *testing.T) {
@@ -264,7 +270,7 @@ func TestStateUpdateReportStatus(t *testing.T) {
 	usr := NewUpdateStatusReportState(update, client.StatusFailure)
 	usr.Handle(&ctx, sc)
 	assert.Equal(t, client.StatusFailure, sc.reportStatus)
-	assert.Equal(t, update, sc.reportUpdate)
+	assert.Equal(t, *update, *sc.reportUpdate)
 
 	assert.NotEmpty(t, sc.logs)
 	assert.JSONEq(t, `{
@@ -280,7 +286,7 @@ func TestStateUpdateReportStatus(t *testing.T) {
 	usr = NewUpdateStatusReportState(update, client.StatusSuccess)
 	usr.Handle(&ctx, sc)
 	assert.Equal(t, client.StatusSuccess, sc.reportStatus)
-	assert.Equal(t, update, sc.reportUpdate)
+	assert.Equal(t, *update, *sc.reportUpdate)
 
 	// cancelled state should not wipe state data, for this pretend the reporting
 	// fails and cancel
@@ -294,7 +300,7 @@ func TestStateUpdateReportStatus(t *testing.T) {
 	assert.False(t, c)
 	sd, err := LoadStateData(ms)
 	assert.NoError(t, err)
-	assert.Equal(t, update, sd.UpdateInfo)
+	assert.Equal(t, *update, *sd.UpdateInfo)
 	assert.Equal(t, client.StatusSuccess, sd.UpdateStatus)
 
 	poll := 5 * time.Millisecond
@@ -420,8 +426,8 @@ func TestStateInit(t *testing.T) {
 	update.Artifact.ArtifactName = "fakeid"
 
 	StoreStateData(ms, StateData{
-		Name:       MenderStateReboot,
-		UpdateInfo: update,
+		Name:       datastore.MenderStateReboot,
+		UpdateInfo: *update,
 	})
 	// have state data and have correct artifact name
 	s, c = i.Handle(&ctx, &stateTestController{
@@ -432,7 +438,7 @@ func TestStateInit(t *testing.T) {
 	})
 	assert.IsType(t, &AfterRebootState{}, s)
 	uvs := s.(*AfterRebootState)
-	assert.Equal(t, update, uvs.Update())
+	assert.Equal(t, *update, *uvs.Update())
 	assert.False(t, c)
 
 	// error restoring state data
@@ -444,7 +450,7 @@ func TestStateInit(t *testing.T) {
 
 	// pretend reading invalid state
 	StoreStateData(ms, StateData{
-		UpdateInfo: update,
+		UpdateInfo: *update,
 	})
 	s, c = i.Handle(&ctx, &stateTestController{
 		fakeDevice: fakeDevice{
@@ -453,12 +459,12 @@ func TestStateInit(t *testing.T) {
 	})
 	assert.IsType(t, &UpdateErrorState{}, s)
 	use, _ := s.(*UpdateErrorState)
-	assert.Equal(t, update, use.update)
+	assert.Equal(t, *update, *use.update)
 
 	// update-commit-leave behaviour
 	StoreStateData(ms, StateData{
-		UpdateInfo: update,
-		Name:       MenderStateUpdateCommit,
+		UpdateInfo: *update,
+		Name:       datastore.MenderStateUpdateCommit,
 	})
 	ctrl := &stateTestController{
 		fakeDevice: fakeDevice{
@@ -567,7 +573,7 @@ func TestStateUpdateCommit(t *testing.T) {
 		store: ms,
 	}
 	StoreStateData(ms, StateData{
-		UpdateInfo: update,
+		UpdateInfo: *update,
 	})
 	// commit without errors
 	sc := &stateTestController{}
@@ -575,7 +581,7 @@ func TestStateUpdateCommit(t *testing.T) {
 	assert.IsType(t, &RollbackState{}, s)
 	assert.False(t, c)
 	usr, _ := s.(*RollbackState)
-	assert.Equal(t, update, usr.Update())
+	assert.Equal(t, *update, *usr.Update())
 
 	s, c = cs.Handle(&ctx, &stateTestController{
 		fakeDevice: fakeDevice{
@@ -585,7 +591,7 @@ func TestStateUpdateCommit(t *testing.T) {
 	assert.IsType(t, s, &RollbackState{})
 	assert.False(t, c)
 	rs, _ := s.(*RollbackState)
-	assert.Equal(t, update, rs.Update())
+	assert.Equal(t, *update, *rs.Update())
 }
 
 func TestStateUpdateCheckWait(t *testing.T) {
@@ -656,12 +662,12 @@ func TestStateUpdateCheck(t *testing.T) {
 	update := &datastore.UpdateInfo{}
 
 	s, c = cs.Handle(ctx, &stateTestController{
-		updateResp: update,
+		updateResp: *update,
 	})
 	assert.IsType(t, &UpdateFetchState{}, s)
 	assert.False(t, c)
 	ufs, _ := s.(*UpdateFetchState)
-	assert.Equal(t, *update, ufs.update)
+	assert.Equal(t, *update, *ufs.update)
 }
 
 func TestUpdateCheckSameImage(t *testing.T) {
@@ -677,13 +683,13 @@ func TestUpdateCheckSameImage(t *testing.T) {
 	}
 
 	s, c = cs.Handle(ctx, &stateTestController{
-		updateResp:    update,
+		updateResp:    *update,
 		updateRespErr: NewTransientError(os.ErrExist),
 	})
 	assert.IsType(t, &UpdateStatusReportState{}, s)
 	assert.False(t, c)
 	urs, _ := s.(*UpdateStatusReportState)
-	assert.Equal(t, *update, urs.Update())
+	assert.Equal(t, *update, *urs.Update())
 	assert.Equal(t, client.StatusAlreadyInstalled, urs.status)
 }
 
@@ -724,14 +730,14 @@ func TestStateUpdateFetch(t *testing.T) {
 	assert.IsType(t, &UpdateStoreState{}, s)
 	assert.False(t, c)
 	assert.Equal(t, client.StatusDownloading, sc.reportStatus)
-	assert.Equal(t, update, sc.reportUpdate)
+	assert.Equal(t, *update, *sc.reportUpdate)
 
 	ud, err := LoadStateData(ms)
 	assert.NoError(t, err)
 	assert.Equal(t, StateData{
 		Version:    stateDataVersion,
-		UpdateInfo: update,
-		Name:       MenderStateUpdateFetch,
+		UpdateInfo: *update,
+		Name:       datastore.MenderStateUpdateFetch,
 	}, ud)
 
 	uis, _ := s.(*UpdateStoreState)
@@ -791,7 +797,7 @@ func TestStateUpdateFetchRetry(t *testing.T) {
 
 	// Final attempt should fail completely.
 	s.(*FetchStoreRetryState).WaitState = &waitStateTest{baseState{
-		id: MenderStateCheckWait,
+		id: datastore.MenderStateCheckWait,
 	}}
 
 	s, c = s.Handle(&ctx, &stc)
@@ -835,8 +841,8 @@ func TestStateUpdateStore(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, StateData{
 		Version:    stateDataVersion,
-		UpdateInfo: update,
-		Name:       MenderStateUpdateStore,
+		UpdateInfo: *update,
+		Name:       datastore.MenderStateUpdateStore,
 	}, ud)
 
 	// pretend update was aborted
@@ -879,7 +885,7 @@ func TestStateUpdateInstallRetry(t *testing.T) {
 	// (1m*3) + (2m*3) + (4m*3) + (5m*3)
 	for i := 0; i < 12; i++ {
 		s.(*FetchStoreRetryState).WaitState = &waitStateTest{baseState{
-			id: MenderStateCheckWait,
+			id: datastore.MenderStateCheckWait,
 		}}
 
 		s, c = s.Handle(&ctx, &stc)
@@ -901,7 +907,7 @@ func TestStateUpdateInstallRetry(t *testing.T) {
 
 	// Final attempt should fail completely.
 	s.(*FetchStoreRetryState).WaitState = &waitStateTest{baseState{
-		id: MenderStateCheckWait,
+		id: datastore.MenderStateCheckWait,
 	}}
 
 	s, c = s.Handle(&ctx, &stc)
@@ -981,7 +987,7 @@ func TestStateData(t *testing.T) {
 	ms := store.NewMemStore()
 	sd := StateData{
 		Version: stateDataVersion,
-		Name:    MenderStateInit,
+		Name:    datastore.MenderStateInit,
 		UpdateInfo: datastore.UpdateInfo{
 			ID: "foobar",
 		},
@@ -1032,8 +1038,8 @@ func TestStateReportError(t *testing.T) {
 	// store some state data, failing to report status with a failed update
 	// will just clean that up and
 	StoreStateData(ms, StateData{
-		Name:       MenderStateReportStatusError,
-		UpdateInfo: update,
+		Name:       datastore.MenderStateReportStatusError,
+		UpdateInfo: *update,
 	})
 	// update failed and we failed to report that status to the server,
 	// state data should be removed and we should go back to init
@@ -1048,7 +1054,7 @@ func TestStateReportError(t *testing.T) {
 	// store some state data, failing to report status with an update that
 	// is already installed will also clean it up
 	StoreStateData(ms, StateData{
-		Name:       MenderStateReportStatusError,
+		Name:       datastore.MenderStateReportStatusError,
 		UpdateInfo: update,
 	})
 	// update is already installed and we failed to report that status to

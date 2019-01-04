@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/mendersoftware/mender/client"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/store"
 	"github.com/stretchr/testify/assert"
 )
@@ -84,7 +85,7 @@ func TestAuthManager(t *testing.T) {
 	assert.Equal(t, noAuthToken, code)
 	assert.NoError(t, err)
 
-	ms.WriteAll(authTokenName, []byte("footoken"))
+	ms.WriteAll(datastore.AuthTokenName, []byte("footoken"))
 	// disable store access
 	ms.Disable(true)
 	code, err = am.AuthToken()
@@ -180,7 +181,7 @@ func TestAuthManagerResponse(t *testing.T) {
 
 	ms.ReadOnly(false)
 	err = am.RecvAuthResponse([]byte("fooresp"))
-	tokdata, err := ms.ReadAll(authTokenName)
+	tokdata, err := ms.ReadAll(datastore.AuthTokenName)
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("fooresp"), tokdata)
 	assert.True(t, am.IsAuthorized())

@@ -391,7 +391,7 @@ func commonInit(config *menderConfig, opts *runOptionsType) (*MenderPieces, erro
 	return &mp, nil
 }
 
-func initDaemon(config *menderConfig, dev *dualRootfsDevice, env BootEnvReadWriter,
+func initDaemon(config *menderConfig, dev dualRootfsDevice, env BootEnvReadWriter,
 	opts *runOptionsType) (*menderDaemon, error) {
 
 	mp, err := commonInit(config, opts)
@@ -455,7 +455,7 @@ func doMain(args []string) error {
 	return handleCLIOptions(runOptions, env, dualRootfsDevice, config)
 }
 
-func handleCLIOptions(runOptions runOptionsType, env *uBootEnv, dualRootfsDevice *dualRootfsDevice, config *menderConfig) error {
+func handleCLIOptions(runOptions runOptionsType, env *uBootEnv, dualRootfsDevice dualRootfsDevice, config *menderConfig) error {
 
 	switch {
 

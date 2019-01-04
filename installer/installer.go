@@ -16,7 +16,6 @@ package installer
 
 import (
 	"io"
-	"io/ioutil"
 	"os"
 
 	"github.com/mendersoftware/log"
@@ -28,7 +27,7 @@ import (
 )
 
 type UInstaller interface {
-	StoreUpdate(io.ReadCloser, int64) error
+	StoreUpdate(r io.Reader, info os.FileInfo) error
 	InstallUpdate() error
 }
 
@@ -52,9 +51,13 @@ type ArtifactPayloadInstaller interface {
 	NewInstance(bucketNum int) (ArtifactPayloadInstaller, error)
 }
 
-func Install(art io.ReadCloser, dt string, key []byte,
-	scrDir, modulesDir, modulesWorkDir string,
-	dualRootfsDevice UInstaller, acceptStateScripts bool) error {
+type UpdateStorerProducers struct {
+	DualRootfs handlers.UpdateStorerProducer
+	Modules    handlers.UpdateStorerProducer
+}
+
+func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
+	inst *UpdateStorerProducers, acceptStateScripts bool) error {
 
 	var ar *areader.Reader
 	// if there is a verification key artifact must be signed
@@ -68,7 +71,7 @@ func Install(art io.ReadCloser, dt string, key []byte,
 	// Important for the client to forbid artifacts types we don't know.
 	ar.ForbidUnknownHandlers = true
 
-	if err := registerHandlers(ar, dualRootfsDevice); err != nil {
+	if err := registerHandlers(ar, inst); err != nil {
 		return err
 	}
 
@@ -148,22 +151,11 @@ func Install(art io.ReadCloser, dt string, key []byte,
 	return nil
 }
 
-func registerHandlers(ar *areader.Reader, dualRootfsDevice UInstaller) error {
+func registerHandlers(ar *areader.Reader, inst *UpdateStorerProducers) error {
+
 	// Built-in rootfs handler.
 	rootfs := handlers.NewRootfsInstaller()
-	rootfs.SetInstallHandler(func(r io.Reader, info os.FileInfo) error {
-		if dualRootfsDevice == nil {
-			return errors.New("No dual rootfs configuration present: Cannot install update")
-		}
-		log.Debugf("installing update %v of size %v", info.Name(), info.Size())
-		err := dualRootfsDevice.StoreUpdate(ioutil.NopCloser(r), info.Size())
-		if err != nil {
-			log.Errorf("update image installation failed: %v", err)
-			return err
-		}
-		return nil
-	})
-
+	rootfs.SetUpdateStorerProducer(inst.DualRootfs)
 	if err := ar.RegisterHandler(rootfs); err != nil {
 		return errors.Wrap(err, "failed to register rootfs install handler")
 	}
@@ -172,7 +164,7 @@ func registerHandlers(ar *areader.Reader, dualRootfsDevice UInstaller) error {
 	updateTypes := []string{"test-type"}
 	for _, updateType := range updateTypes {
 		moduleImage := handlers.NewModuleImage(updateType)
-		moduleImage.SetInstallHandler(NewModuleInstaller())
+		moduleImage.SetUpdateStorerProducer(inst.Modules)
 		if err := ar.RegisterHandler(moduleImage); err != nil {
 			return errors.Wrapf(err, "failed to register '%s' install handler",
 				updateType)

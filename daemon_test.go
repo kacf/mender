@@ -23,7 +23,9 @@ import (
 	"time"
 
 	"github.com/mendersoftware/mender/client"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/store"
+	"github.com/mendersoftware/mender-artifact/handlers"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -45,7 +47,7 @@ func (f fakeDevice) Rollback() error {
 	return f.retRollback
 }
 
-func (f fakeDevice) StoreUpdate(from io.ReadCloser, sz int64) error {
+func (f fakeDevice) StoreUpdate(from io.Reader, info os.FileInfo) error {
 	if f.consumeUpdate {
 		_, err := io.Copy(ioutil.Discard, from)
 		return err
@@ -75,6 +77,18 @@ func (f fakeDevice) VerifyRollbackReboot() error {
 	} else {
 		return nil
 	}
+}
+
+func (f fakeDevice) GetActive() (string, error) {
+	return "", errors.New("Not implemented")
+}
+
+func (f fakeDevice) GetInactive() (string, error) {
+	return "", errors.New("Not implemented")
+}
+
+func (f fakeDevice) NewUpdateStorer(int) (handlers.UpdateStorer, error) {
+	return &f, nil
 }
 
 type fakeUpdater struct {
@@ -114,7 +128,7 @@ func TestDaemon(t *testing.T) {
 		})
 	mender.state = &fakePreDoneState{
 		baseState{
-			id: MenderStateInit,
+			id: datastore.MenderStateInit,
 		},
 	}
 

@@ -15,7 +15,6 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -49,10 +48,11 @@ type Controller interface {
 	GetRetryPollInterval() time.Duration
 	CheckUpdate() (*datastore.UpdateInfo, menderError)
 	FetchUpdate(url string) (io.ReadCloser, int64, error)
-	ReportUpdateStatus(update datastore.UpdateInfo, status string) menderError
-	UploadLog(update datastore.UpdateInfo, logs []byte) menderError
+	ReportUpdateStatus(update *datastore.UpdateInfo, status string) menderError
+	UploadLog(update *datastore.UpdateInfo, logs []byte) menderError
 	InventoryRefresh() error
 	CheckScriptsCompatibility() error
+	InstallArtifact(from io.ReadCloser, size int64) error
 
 	GetInstallers() []installer.UInstallCommitRebooter
 
@@ -81,17 +81,17 @@ var (
 	// See shouldReportUpdateStatus() function for how we are
 	// deciding if report needs to be send to the backend.
 	stateStatus = map[datastore.MenderState]string{
-		datastore.MenderStateUpdateFetch:         StatusDownloading,
-		datastore.MenderStateUpdateStore:         StatusDownloading,
-		datastore.MenderStateUpdateInstall:       StatusInstalling,
-		datastore.MenderStateUpdateVerify:        StatusRebooting,
-		datastore.MenderStateUpdateCommit:        StatusRebooting,
-		datastore.MenderStateReboot:              StatusRebooting,
-		datastore.MenderStateAfterReboot:         StatusRebooting,
-		datastore.MenderStateRollback:            StatusRebooting,
-		datastore.MenderStateRollbackReboot:      StatusRebooting,
-		datastore.MenderStateAfterRollbackReboot: StatusRebooting,
-		datastore.MenderStateUpdateError:         StatusFailure,
+		datastore.MenderStateUpdateFetch:         client.StatusDownloading,
+		datastore.MenderStateUpdateStore:         client.StatusDownloading,
+		datastore.MenderStateUpdateInstall:       client.StatusInstalling,
+		datastore.MenderStateUpdateVerify:        client.StatusRebooting,
+		datastore.MenderStateUpdateCommit:        client.StatusRebooting,
+		datastore.MenderStateReboot:              client.StatusRebooting,
+		datastore.MenderStateAfterReboot:         client.StatusRebooting,
+		datastore.MenderStateRollback:            client.StatusRebooting,
+		datastore.MenderStateRollbackReboot:      client.StatusRebooting,
+		datastore.MenderStateAfterRollbackReboot: client.StatusRebooting,
+		datastore.MenderStateUpdateError:         client.StatusFailure,
 	}
 )
 
@@ -105,7 +105,9 @@ func StateStatus(m datastore.MenderState) string {
 }
 
 type mender struct {
-	dualRootfsDevice    *dualRootfsDevice
+	dualRootfsDevice    dualRootfsDevice
+	modulesFactory      *installer.ModuleInstallerFactory
+	installers          []installer.UInstallCommitRebooter
 	updater             client.Updater
 	state               State
 	stateScriptExecutor statescript.Executor
@@ -121,7 +123,7 @@ type mender struct {
 }
 
 type MenderPieces struct {
-	dualRootfsDevice *dualRootfsDevice
+	dualRootfsDevice dualRootfsDevice
 	store            store.Store
 	authMgr          AuthManager
 }
@@ -143,6 +145,7 @@ func NewMender(config menderConfig, pieces MenderPieces) (*mender, error) {
 
 	m := &mender{
 		dualRootfsDevice:    pieces.dualRootfsDevice,
+		modulesFactory:      installer.NewModuleInstallerFactory(config.ModulesPath, config.ModulesWorkPath),
 		updater:             client.NewUpdate(),
 		artifactInfoFile:    defaultArtifactInfoFile,
 		deviceTypeFile:      defaultDeviceTypeFile,
@@ -399,7 +402,7 @@ func (m *mender) CheckUpdate() (*datastore.UpdateInfo, menderError) {
 	return &update, nil
 }
 
-func (m *mender) ReportUpdateStatus(update datastore.UpdateInfo, status string) menderError {
+func (m *mender) ReportUpdateStatus(update *datastore.UpdateInfo, status string) menderError {
 	s := client.NewStatus()
 	err := s.Report(m.api.Request(m.authToken, nextServerIterator(m), reauthorize(m)), m.config.Servers[0].ServerURL,
 		client.StatusReport{
@@ -498,7 +501,7 @@ func nextServerIterator(m *mender) func() *client.MenderServer {
 
 /* client closures END */
 
-func (m *mender) UploadLog(update datastore.UpdateInfo, logs []byte) menderError {
+func (m *mender) UploadLog(update *datastore.UpdateInfo, logs []byte) menderError {
 	s := client.NewLog()
 	err := s.Upload(m.api.Request(m.authToken, nextServerIterator(m), reauthorize(m)), m.config.Servers[0].ServerURL,
 		client.LogData{
@@ -557,16 +560,16 @@ func TransitionError(s State, action string) State {
 		s.Id().String(), s.Transition().String())
 	switch t := s.(type) {
 	case *UpdateFetchState:
-		new := NewUpdateStatusReportState(t.update, client.StatusFailure)
+		new := NewUpdateStatusReportState(&t.update, client.StatusFailure)
 		new.SetTransition(ToError)
 		return new
 	case *UpdateStoreState:
 		if action == "Leave" {
-			new := NewUpdateStatusReportState(t.update, client.StatusFailure)
+			new := NewUpdateStatusReportState(&t.update, client.StatusFailure)
 			new.SetTransition(ToError)
 			return new
 		}
-		return NewUpdateErrorState(me, t.update)
+		return NewUpdateErrorState(me, &t.update)
 	case *UpdateInstallState:
 		return NewRollbackState(t.Update(), false)
 	case *RebootState:
@@ -592,12 +595,12 @@ func shouldReportUpdateStatus(state datastore.MenderState) bool {
 	return StateStatus(state) != ""
 }
 
-func getUpdateFromState(state State) (datastore.UpdateInfo, error) {
+func getUpdateFromState(state State) (*datastore.UpdateInfo, error) {
 	upd, ok := state.(UpdateState)
 	if ok {
 		return upd.Update(), nil
 	}
-	return datastore.UpdateInfo{},
+	return &datastore.UpdateInfo{},
 		errors.Errorf("failed to extract the update from state: %s", state)
 }
 
@@ -715,17 +718,41 @@ func (m *mender) CheckScriptsCompatibility() error {
 	return m.stateScriptExecutor.CheckRootfsScriptsVersion()
 }
 
-func (m *mender) StoreUpdate(from io.ReadCloser, size int64) error {
+func (m *mender) InstallArtifact(from io.ReadCloser, size int64) error {
 	deviceType, err := m.GetDeviceType()
 	if err != nil {
 		log.Errorf("Unable to verify the existing hardware. Update will continue anyways: %v : %v", defaultDeviceTypeFile, err)
 	}
-	return installer.Install(from,
+
+	m.modulesFactory.ClearProducedInstallers()
+
+	installerFactories := installer.UpdateStorerProducers{
+		DualRootfs: m.dualRootfsDevice,
+		Modules:    m.modulesFactory,
+	}
+
+	err = installer.Install(from,
 		deviceType,
 		m.GetArtifactVerifyKey(),
 		m.stateScriptPath,
-		m.config.ModulesPath,
-		m.config.ModulesWorkPath,
-		m.dualRootfsDevice,
+		&installerFactories,
 		true)
+	m.updateInstallers()
+	return err
+}
+
+func (m *mender) updateInstallers() {
+	m.installers = []installer.UInstallCommitRebooter{}
+	if m.dualRootfsDevice != nil {
+		m.installers = append(m.installers, m.dualRootfsDevice)
+	}
+
+	produced := m.modulesFactory.GetProducedInstallers()
+	for _, i := range produced {
+		m.installers = append(m.installers, i)
+	}
+}
+
+func (m *mender) GetInstallers() []installer.UInstallCommitRebooter {
+	return m.installers
 }

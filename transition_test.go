@@ -40,7 +40,7 @@ func (s *testState) Handle(ctx *StateContext, c Controller) (State, bool) {
 
 func (s *testState) Cancel() bool { return true }
 
-func (s *testState) Id() MenderState { return MenderStateInit }
+func (s *testState) Id() datastore.MenderState { return datastore.MenderStateInit }
 
 func (s *testState) Transition() Transition        { return s.t }
 func (s *testState) SetTransition(tran Transition) { s.t = tran }

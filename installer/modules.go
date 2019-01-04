@@ -16,6 +16,7 @@ package installer
 
 import (
 	"io"
+	"os"
 
 	"github.com/mendersoftware/mender-artifact/handlers"
 )
@@ -26,7 +27,7 @@ type ModuleInstaller struct {
 	modulesWorkPath string
 }
 
-func (mod *ModuleInstaller) StoreUpdate(r io.ReadCloser, size int64) error {
+func (mod *ModuleInstaller) StoreUpdate(r io.Reader, info os.FileInfo) error {
 	return nil
 }
 
@@ -60,6 +61,13 @@ type ModuleInstallerFactory struct {
 	installers      []*ModuleInstaller
 }
 
+func NewModuleInstallerFactory(modulesPath, modulesWorkPath string) *ModuleInstallerFactory {
+	return &ModuleInstallerFactory{
+		modulesPath: modulesPath,
+		modulesWorkPath: modulesWorkPath,
+	}
+}
+
 func (mf *ModuleInstallerFactory) NewUpdateStorer(payloadNum int) (handlers.UpdateStorer, error) {
 	mod := &ModuleInstaller{
 		payloadIndex:     payloadNum,
@@ -68,4 +76,12 @@ func (mf *ModuleInstallerFactory) NewUpdateStorer(payloadNum int) (handlers.Upda
 	}
 	mf.installers = append(mf.installers, mod)
 	return mod, nil
+}
+
+func (mf *ModuleInstallerFactory) GetProducedInstallers() []*ModuleInstaller {
+	return mf.installers
+}
+
+func (mf *ModuleInstallerFactory) ClearProducedInstallers() {
+	mf.installers = []*ModuleInstaller{}
 }

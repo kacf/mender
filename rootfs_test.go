@@ -25,7 +25,7 @@ import (
 )
 
 func Test_doManualUpdate_noParams_fail(t *testing.T) {
-	if err := doRootfs(new(device), runOptionsType{}, "", nil, &menderConfig{}); err == nil {
+	if err := doRootfs(new(dualRootfsDeviceImpl), runOptionsType{}, "", nil, &menderConfig{}); err == nil {
 		t.FailNow()
 	}
 }
@@ -36,13 +36,13 @@ func Test_doManualUpdate_invalidHttpsClientConfig_updateFails(t *testing.T) {
 	runOptions.imageFile = &iamgeFileName
 	runOptions.ServerCert = "non-existing"
 
-	if err := doRootfs(new(device), runOptions, "", nil, &menderConfig{}); err == nil {
+	if err := doRootfs(new(dualRootfsDeviceImpl), runOptions, "", nil, &menderConfig{}); err == nil {
 		t.FailNow()
 	}
 }
 
 func Test_doManualUpdate_nonExistingFile_fail(t *testing.T) {
-	fakeDevice := device{}
+	fakeDevice := dualRootfsDeviceImpl{}
 	fakeRunOptions := runOptionsType{}
 	imageFileName := "non-existing"
 	fakeRunOptions.imageFile = &imageFileName
@@ -53,7 +53,7 @@ func Test_doManualUpdate_nonExistingFile_fail(t *testing.T) {
 }
 
 func Test_doManualUpdate_networkUpdateNoClient_fail(t *testing.T) {
-	fakeDevice := device{}
+	fakeDevice := dualRootfsDeviceImpl{}
 	fakeRunOptions := runOptionsType{}
 	imageFileName := "http://non-existing"
 	fakeRunOptions.imageFile = &imageFileName
@@ -64,7 +64,7 @@ func Test_doManualUpdate_networkUpdateNoClient_fail(t *testing.T) {
 }
 
 func Test_doManualUpdate_networkClientExistsNoServer_fail(t *testing.T) {
-	fakeDevice := device{}
+	fakeDevice := dualRootfsDeviceImpl{}
 	fakeRunOptions := runOptionsType{}
 	imageFileName := "http://non-existing"
 	fakeRunOptions.imageFile = &imageFileName

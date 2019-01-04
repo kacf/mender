@@ -17,6 +17,7 @@ import (
 	"os"
 
 	"github.com/mendersoftware/log"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/store"
 	"github.com/pkg/errors"
 )
@@ -86,7 +87,7 @@ func (d *menderDaemon) Run() error {
 			// Identity op - do nothing.
 		}
 		toState, cancelled = d.mender.TransitionState(toState, &d.sctx)
-		if toState.Id() == MenderStateError {
+		if toState.Id() == datastore.MenderStateError {
 			es, ok := toState.(*ErrorState)
 			if ok {
 				if es.IsFatal() {
@@ -96,7 +97,7 @@ func (d *menderDaemon) Run() error {
 				return errors.New("failed")
 			}
 		}
-		if cancelled || toState.Id() == MenderStateDone {
+		if cancelled || toState.Id() == datastore.MenderStateDone {
 			break
 		}
 		if d.shouldStop() {

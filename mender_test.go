@@ -16,7 +16,6 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
-	"encoding/json"
 	"io"
 	"io/ioutil"
 	"os"
@@ -30,6 +29,7 @@ import (
 	"github.com/mendersoftware/mender-artifact/handlers"
 	"github.com/mendersoftware/mender/client"
 	cltest "github.com/mendersoftware/mender/client/test"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/store"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
@@ -98,8 +98,8 @@ func newTestMender(runner *testOSCalls, config menderConfig, pieces testMenderPi
 		pieces.store = store.NewMemStore()
 	}
 
-	if pieces.device == nil {
-		pieces.device = &fakeDevice{}
+	if pieces.dualRootfsDevice == nil {
+		pieces.dualRootfsDevice = &fakeDevice{}
 	}
 
 	if pieces.authMgr == nil {
@@ -489,7 +489,7 @@ func TestMenderReportStatus(t *testing.T) {
 		},
 	)
 
-	ms.WriteAll(authTokenName, []byte("tokendata"))
+	ms.WriteAll(datastore.AuthTokenName, []byte("tokendata"))
 
 	err := mender.Authorize()
 	assert.NoError(t, err)
@@ -499,7 +499,7 @@ func TestMenderReportStatus(t *testing.T) {
 
 	// 1. successful report
 	err = mender.ReportUpdateStatus(
-		datastore.UpdateInfo{
+		&datastore.UpdateInfo{
 			ID: "foobar",
 		},
 		client.StatusSuccess,
@@ -512,7 +512,7 @@ func TestMenderReportStatus(t *testing.T) {
 	srv.Auth.Token = []byte("footoken")
 	srv.Auth.Verify = true
 	err = mender.ReportUpdateStatus(
-		datastore.UpdateInfo{
+		&datastore.UpdateInfo{
 			ID: "foobar",
 		},
 		client.StatusSuccess,
@@ -527,7 +527,7 @@ func TestMenderReportStatus(t *testing.T) {
 	srv.Auth.Verify = true
 	srv.Status.Aborted = true
 	err = mender.ReportUpdateStatus(
-		datastore.UpdateInfo{
+		&datastore.UpdateInfo{
 			ID: "foobar",
 		},
 		client.StatusSuccess,
@@ -554,7 +554,7 @@ func TestMenderLogUpload(t *testing.T) {
 		},
 	)
 
-	ms.WriteAll(authTokenName, []byte("tokendata"))
+	ms.WriteAll(datastore.AuthTokenName, []byte("tokendata"))
 
 	err := mender.Authorize()
 	assert.NoError(t, err)
@@ -569,7 +569,7 @@ func TestMenderLogUpload(t *testing.T) {
 }`)
 
 	err = mender.UploadLog(
-		datastore.UpdateInfo{
+		&datastore.UpdateInfo{
 			ID: "foobar",
 		},
 		logs,
@@ -592,29 +592,12 @@ func TestMenderLogUpload(t *testing.T) {
 	// 2. pretend authorization fails, server expects a different token
 	srv.Auth.Token = []byte("footoken")
 	err = mender.UploadLog(
-		datastore.UpdateInfo{
+		&datastore.UpdateInfo{
 			ID: "foobar",
 		},
 		logs,
 	)
 	assert.NotNil(t, err)
-}
-
-func TestMenderState(t *testing.T) {
-	d, err := json.Marshal(MenderStateInit)
-
-	assert.Equal(t, []byte(`"init"`), d)
-	assert.NoError(t, err)
-
-	d, err = json.Marshal(MenderState(333))
-	assert.Error(t, err)
-	assert.Empty(t, d)
-
-	var s MenderState
-	err = json.Unmarshal([]byte(`"init"`), &s)
-
-	assert.NoError(t, err)
-	assert.Equal(t, MenderStateInit, s)
 }
 
 func TestAuthToken(t *testing.T) {
@@ -634,8 +617,8 @@ func TestAuthToken(t *testing.T) {
 			},
 		},
 	)
-	ms.WriteAll(authTokenName, []byte("tokendata"))
-	token, err := ms.ReadAll(authTokenName)
+	ms.WriteAll(datastore.AuthTokenName, []byte("tokendata"))
+	token, err := ms.ReadAll(datastore.AuthTokenName)
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("tokendata"), token)
 
@@ -658,7 +641,7 @@ func TestAuthToken(t *testing.T) {
 	_, updErr := mender.CheckUpdate()
 	assert.EqualError(t, errors.Cause(updErr), client.ErrNotAuthorized.Error())
 
-	token, err = ms.ReadAll(authTokenName)
+	token, err = ms.ReadAll(datastore.AuthTokenName)
 	assert.Equal(t, os.ErrNotExist, err)
 	assert.Empty(t, token)
 }
@@ -694,7 +677,7 @@ func TestMenderInventoryRefresh(t *testing.T) {
 	mender.artifactInfoFile = artifactInfo
 	mender.deviceTypeFile = deviceType
 
-	ms.WriteAll(authTokenName, []byte("tokendata"))
+	ms.WriteAll(datastore.AuthTokenName, []byte("tokendata"))
 
 	merr := mender.Authorize()
 	assert.NoError(t, merr)
@@ -870,7 +853,7 @@ func TestMenderStoreUpdate(t *testing.T) {
 	mender := newTestMender(nil, menderConfig{},
 		testMenderPieces{
 			MenderPieces: MenderPieces{
-				device: &fakeDevice{consumeUpdate: true},
+				dualRootfsDevice: &fakeDevice{consumeUpdate: true},
 			},
 		},
 	)
@@ -879,14 +862,14 @@ func TestMenderStoreUpdate(t *testing.T) {
 	// try some failure scenarios first
 
 	// EOF
-	err := mender.StoreUpdate(ioutil.NopCloser(&bytes.Buffer{}), 0)
+	err := mender.InstallArtifact(ioutil.NopCloser(&bytes.Buffer{}), 0)
 	assert.Error(t, err)
 	t.Logf("error: %v", err)
 
 	// some error from reader
 	mr := mockReader{}
 	mr.On("Read").Return(0, errors.New("failed"))
-	err = mender.StoreUpdate(ioutil.NopCloser(&mr), 0)
+	err = mender.InstallArtifact(ioutil.NopCloser(&mr), 0)
 	assert.Error(t, err)
 	t.Logf("error: %v", err)
 
@@ -897,7 +880,7 @@ func TestMenderStoreUpdate(t *testing.T) {
 
 	// setup soem bogus device_type so that we don't match the update
 	ioutil.WriteFile(deviceType, []byte("device_type=bogusdevicetype\n"), 0644)
-	err = mender.StoreUpdate(upd, 0)
+	err = mender.InstallArtifact(upd, 0)
 	assert.Error(t, err)
 
 	// try with a legit device_type
@@ -906,7 +889,7 @@ func TestMenderStoreUpdate(t *testing.T) {
 	assert.NotNil(t, upd)
 
 	ioutil.WriteFile(deviceType, []byte("device_type=vexpress-qemu\n"), 0644)
-	err = mender.StoreUpdate(upd, 0)
+	err = mender.InstallArtifact(upd, 0)
 	assert.NoError(t, err)
 
 	// now try with device throwing errors durin ginstall
@@ -917,12 +900,12 @@ func TestMenderStoreUpdate(t *testing.T) {
 	mender = newTestMender(nil, menderConfig{},
 		testMenderPieces{
 			MenderPieces: MenderPieces{
-				device: &fakeDevice{retStoreUpdate: errors.New("failed")},
+				dualRootfsDevice: &fakeDevice{retStoreUpdate: errors.New("failed")},
 			},
 		},
 	)
 	mender.deviceTypeFile = deviceType
-	err = mender.StoreUpdate(upd, 0)
+	err = mender.InstallArtifact(upd, 0)
 	assert.Error(t, err)
 
 }
@@ -946,7 +929,7 @@ func TestMenderFetchUpdate(t *testing.T) {
 			},
 		})
 
-	ms.WriteAll(authTokenName, []byte("tokendata"))
+	ms.WriteAll(datastore.AuthTokenName, []byte("tokendata"))
 	merr := mender.Authorize()
 	assert.NoError(t, merr)
 

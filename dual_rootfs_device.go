@@ -16,12 +16,15 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/mendersoftware/log"
+	"github.com/mendersoftware/mender/installer"
+	"github.com/mendersoftware/mender-artifact/handlers"
 	"github.com/pkg/errors"
 )
 
@@ -30,11 +33,19 @@ type dualRootfsDeviceConfig struct {
 	rootfsPartB string
 }
 
-type dualRootfsDevice struct {
+type dualRootfsDeviceImpl struct {
 	BootEnvReadWriter
 	Commander
 	*partitions
 	rebooter *systemRebooter
+}
+
+// This interface is only here for tests.
+type dualRootfsDevice interface {
+	installer.UInstallCommitRebooter
+	handlers.UpdateStorerProducer
+	GetInactive() (string, error)
+	GetActive() (string, error)
 }
 
 var (
@@ -42,7 +53,7 @@ var (
 )
 
 // Returns nil if config doesn't contain partition paths.
-func NewDualRootfsDevice(env BootEnvReadWriter, sc StatCommander, config dualRootfsDeviceConfig) *dualRootfsDevice {
+func NewDualRootfsDevice(env BootEnvReadWriter, sc StatCommander, config dualRootfsDeviceConfig) dualRootfsDevice {
 	if config.rootfsPartA == "" || config.rootfsPartB == "" {
 		return nil
 	}
@@ -55,7 +66,7 @@ func NewDualRootfsDevice(env BootEnvReadWriter, sc StatCommander, config dualRoo
 		active:            "",
 		inactive:          "",
 	}
-	dualRootfsDevice := dualRootfsDevice{
+	dualRootfsDevice := dualRootfsDeviceImpl{
 		BootEnvReadWriter: env,
 		Commander: sc,
 		partitions: &partitions,
@@ -64,12 +75,12 @@ func NewDualRootfsDevice(env BootEnvReadWriter, sc StatCommander, config dualRoo
 	return &dualRootfsDevice
 }
 
-func (d *dualRootfsDevice) Reboot() error {
+func (d *dualRootfsDeviceImpl) Reboot() error {
 	log.Info("Mender rebooting from active partition: %s", d.active)
 	return d.rebooter.Reboot()
 }
 
-func (d *dualRootfsDevice) Rollback() error {
+func (d *dualRootfsDeviceImpl) Rollback() error {
 	hasUpdate, err := d.HasUpdate()
 	if err != nil {
 		return errors.Wrap(err, "Could not determine whether device has an update")
@@ -93,7 +104,9 @@ func (d *dualRootfsDevice) Rollback() error {
 	return nil
 }
 
-func (d *dualRootfsDevice) StoreUpdate(image io.ReadCloser, size int64) error {
+func (d *dualRootfsDeviceImpl) StoreUpdate(image io.Reader, info os.FileInfo) error {
+
+	size := info.Size()
 
 	log.Debugf("Trying to install update of size: %d", size)
 	if image == nil || size < 0 {
@@ -159,7 +172,7 @@ func (d *dualRootfsDevice) StoreUpdate(image io.ReadCloser, size int64) error {
 	return err
 }
 
-func (d *dualRootfsDevice) getInactivePartition() (string, string, error) {
+func (d *dualRootfsDeviceImpl) getInactivePartition() (string, string, error) {
 	inactivePartition, err := d.GetInactive()
 	if err != nil {
 		return "", "", errors.New("Error obtaining inactive partition: " + err.Error())
@@ -178,7 +191,7 @@ func (d *dualRootfsDevice) getInactivePartition() (string, string, error) {
 	return partitionNumberDecStr, partitionNumberHexStr, nil
 }
 
-func (d *dualRootfsDevice) InstallUpdate() error {
+func (d *dualRootfsDeviceImpl) InstallUpdate() error {
 
 	inactivePartition, inactivePartitionHex, err := d.getInactivePartition()
 	if err != nil {
@@ -197,7 +210,7 @@ func (d *dualRootfsDevice) InstallUpdate() error {
 	return nil
 }
 
-func (d *dualRootfsDevice) CommitUpdate() error {
+func (d *dualRootfsDeviceImpl) CommitUpdate() error {
 	// Check if the user has an upgrade to commit, if not, throw an error
 	hasUpdate, err := d.HasUpdate()
 	if err != nil {
@@ -211,7 +224,7 @@ func (d *dualRootfsDevice) CommitUpdate() error {
 	return errorNoUpgradeMounted
 }
 
-func (d *dualRootfsDevice) HasUpdate() (bool, error) {
+func (d *dualRootfsDeviceImpl) HasUpdate() (bool, error) {
 	env, err := d.ReadEnv("upgrade_available")
 	if err != nil {
 		return false, errors.Wrapf(err, "failed to read environment variable")
@@ -224,7 +237,7 @@ func (d *dualRootfsDevice) HasUpdate() (bool, error) {
 	return false, nil
 }
 
-func (d *dualRootfsDevice) VerifyReboot() error {
+func (d *dualRootfsDeviceImpl) VerifyReboot() error {
 	hasUpdate, err := d.HasUpdate()
 	if err != nil {
 		return err
@@ -235,7 +248,7 @@ func (d *dualRootfsDevice) VerifyReboot() error {
 	}
 }
 
-func (d *dualRootfsDevice) VerifyRollbackReboot() error {
+func (d *dualRootfsDeviceImpl) VerifyRollbackReboot() error {
 	hasUpdate, err := d.HasUpdate()
 	if err != nil {
 		return err
@@ -244,4 +257,17 @@ func (d *dualRootfsDevice) VerifyRollbackReboot() error {
 	} else {
 		return nil
 	}
+}
+
+func (d *dualRootfsDeviceImpl) NewUpdateStorer(payloadNum int) (handlers.UpdateStorer, error) {
+	// We don't maintain any particular state for each payload, just return
+	// the same object.
+	return d, nil
+}
+
+type missingDualRootfsDevice struct {
+}
+
+func (m *missingDualRootfsDevice) NewUpdateStorer(payloadNum int) (handlers.UpdateStorer, error) {
+	return nil, errors.New("No dual rootfs configuration present")
 }

@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/mendersoftware/mender/client"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/statescript"
 	"github.com/mendersoftware/mender/store"
 	"github.com/pkg/errors"
@@ -105,7 +106,7 @@ func (t Transition) Enter(exec statescript.Executor, report *client.StatusReport
 		if err != nil {
 			return errors.Wrap(err, "ArtifactRollbackReboot_Enter: ")
 		}
-		sd.Name = MenderStateReboot
+		sd.Name = datastore.MenderStateReboot
 		err = StoreStateData(store, sd)
 		if err != nil {
 			return errors.Wrap(err, "ArtifactRollbackReboot_Enter: failed to store state-data. ")

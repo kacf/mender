@@ -32,6 +32,7 @@ import (
 
 	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender/client"
+	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -324,7 +325,7 @@ echo mac=00:11:22:33:44:55
 	identityDataHelper = newidh
 
 	// run bootstrap
-	db.Remove(authTokenName)
+	db.Remove(datastore.AuthTokenName)
 	err = doMain([]string{"-data", tdir, "-config", cpath, "-debug", "-bootstrap"})
 	assert.NoError(t, err)
 
@@ -334,12 +335,12 @@ echo mac=00:11:22:33:44:55
 	assert.NotEmpty(t, keyold)
 
 	// and we should have a token
-	d, err := db.ReadAll(authTokenName)
+	d, err := db.ReadAll(datastore.AuthTokenName)
 	assert.NoError(t, err)
 	assert.Equal(t, []byte("foobar-token"), d)
 
 	// force boostrap and run again, check if key was changed
-	db.Remove(authTokenName)
+	db.Remove(datastore.AuthTokenName)
 	err = doMain([]string{"-data", tdir, "-config", cpath, "-debug", "-bootstrap", "-forcebootstrap"})
 	assert.NoError(t, err)
 
@@ -348,7 +349,7 @@ echo mac=00:11:22:33:44:55
 	assert.NotEmpty(t, keynew)
 	assert.NotEqual(t, keyold, keynew)
 
-	db.Remove(authTokenName)
+	db.Remove(datastore.AuthTokenName)
 
 	// return non 200 status code, we should get an error as authorization has
 	// failed
@@ -356,7 +357,7 @@ echo mac=00:11:22:33:44:55
 	err = doMain([]string{"-data", tdir, "-config", cpath, "-debug", "-bootstrap", "-forcebootstrap"})
 	assert.Error(t, err)
 
-	_, err = db.ReadAll(authTokenName)
+	_, err = db.ReadAll(datastore.AuthTokenName)
 	assert.Error(t, err)
 	assert.True(t, os.IsNotExist(err))
 
@@ -432,11 +433,11 @@ func TestInitDaemon(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 	DeploymentLogger = NewDeploymentLogManager(tempDir)
 	bootstrap := false
-	d, err := initDaemon(&menderConfig{}, &dualRootfsDevice{}, &uBootEnv{}, &runOptionsType{dataStore: &tempDir, bootstrapForce: &bootstrap})
+	d, err := initDaemon(&menderConfig{}, &dualRootfsDeviceImpl{}, &uBootEnv{}, &runOptionsType{dataStore: &tempDir, bootstrapForce: &bootstrap})
 	require.Nil(t, err)
 	assert.NotNil(t, d)
 	// Test with failing init daemon
 	runOpts, err := argsParse([]string{"-daemon"})
 	require.Nil(t, err)
-	assert.Error(t, handleCLIOptions(runOpts, &uBootEnv{}, &dualRootfsDevice{}, &menderConfig{}))
+	assert.Error(t, handleCLIOptions(runOpts, &uBootEnv{}, &dualRootfsDeviceImpl{}, &menderConfig{}))
 }

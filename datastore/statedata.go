@@ -36,7 +36,7 @@ type StateData struct {
 
 // current version of the format of StateData;
 // incerease the version number once the format of StateData is changed
-const stateDataVersion = 1
+const StateDataVersion = 1
 
 type MenderState int
 

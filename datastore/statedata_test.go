@@ -11,12 +11,28 @@
 //    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //    See the License for the specific language governing permissions and
 //    limitations under the License.
-package main
+package datastore
 
-type systemRebooter struct {
-	command Commander
-}
+import (
+	"encoding/json"
+	"testing"
 
-func (s *systemRebooter) Reboot() error {
-	return s.command.Command("reboot").Run()
+	"github.com/stretchr/testify/assert"
+)
+
+func TestMenderState(t *testing.T) {
+	d, err := json.Marshal(MenderStateInit)
+
+	assert.Equal(t, []byte(`"init"`), d)
+	assert.NoError(t, err)
+
+	d, err = json.Marshal(MenderState(333))
+	assert.Error(t, err)
+	assert.Empty(t, d)
+
+	var s MenderState
+	err = json.Unmarshal([]byte(`"init"`), &s)
+
+	assert.NoError(t, err)
+	assert.Equal(t, MenderStateInit, s)
 }

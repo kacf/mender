@@ -1,4 +1,4 @@
-// Copyright 2018 Northern.tech AS
+// Copyright 2019 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -206,27 +206,32 @@ func Test_Rollback_OK(t *testing.T) {
 }
 
 func TestDeviceVerifyReboot(t *testing.T) {
-	runner := newTestOSCalls("", -1)
+	config := dualRootfsDeviceConfig{
+		"part1",
+		"part2",
+	}
+
+	runner := newTestOSCalls("", 255)
 	testDevice := NewDualRootfsDevice(
 		&uBootEnv{&runner},
 		nil,
-		dualRootfsDeviceConfig{})
+		config)
 	err := testDevice.VerifyReboot()
-	assert.NoError(t, err)
+	assert.EqualError(t, err, "failed to read environment variable: exit status 255")
 
 	runner = newTestOSCalls("upgrade_available=0", 0)
 	testDevice = NewDualRootfsDevice(
 		&uBootEnv{&runner},
 		nil,
-		dualRootfsDeviceConfig{})
+		config)
 	err = testDevice.VerifyReboot()
-	assert.Error(t, err)
+	assert.EqualError(t, err, "Reboot to new update failed. Expected \"upgrade_available\" flag to be true but it was false")
 
 	runner = newTestOSCalls("upgrade_available=1", 0)
 	testDevice = NewDualRootfsDevice(
 		&uBootEnv{&runner},
 		nil,
-		dualRootfsDeviceConfig{})
+		config)
 	err = testDevice.VerifyReboot()
-	assert.Error(t, err)
+	assert.NoError(t, err)
 }

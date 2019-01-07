@@ -1,4 +1,4 @@
-// Copyright 2018 Northern.tech AS
+// Copyright 2019 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ type stateTestController struct {
 	pollIntvl       time.Duration
 	retryIntvl      time.Duration
 	state           State
-	updateResp      datastore.UpdateInfo
+	updateResp      *datastore.UpdateInfo
 	updateRespErr   menderError
 	authorized      bool
 	authorizeErr    menderError
@@ -71,7 +71,7 @@ func (s *stateTestController) GetRetryPollInterval() time.Duration {
 }
 
 func (s *stateTestController) CheckUpdate() (*datastore.UpdateInfo, menderError) {
-	return &s.updateResp, s.updateRespErr
+	return s.updateResp, s.updateRespErr
 }
 
 func (s *stateTestController) FetchUpdate(url string) (io.ReadCloser, int64, error) {
@@ -666,7 +666,7 @@ func TestStateUpdateCheck(t *testing.T) {
 	update := &datastore.UpdateInfo{}
 
 	s, c = cs.Handle(ctx, &stateTestController{
-		updateResp: *update,
+		updateResp: update,
 	})
 	assert.IsType(t, &UpdateFetchState{}, s)
 	assert.False(t, c)
@@ -687,7 +687,7 @@ func TestUpdateCheckSameImage(t *testing.T) {
 	}
 
 	s, c = cs.Handle(ctx, &stateTestController{
-		updateResp:    *update,
+		updateResp:    update,
 		updateRespErr: NewTransientError(os.ErrExist),
 	})
 	assert.IsType(t, &UpdateStatusReportState{}, s)

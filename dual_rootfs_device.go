@@ -76,7 +76,7 @@ func NewDualRootfsDevice(env BootEnvReadWriter, sc StatCommander, config dualRoo
 }
 
 func (d *dualRootfsDeviceImpl) Reboot() error {
-	log.Info("Mender rebooting from active partition: %s", d.active)
+	log.Infof("Mender rebooting from active partition: %s", d.active)
 	return d.rebooter.Reboot()
 }
 

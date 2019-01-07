@@ -101,8 +101,8 @@ func TestTransitions(t *testing.T) {
 	tdir, err := ioutil.TempDir("", "mendertmp")
 	require.Nil(t, err)
 	st := store.NewDBStore(tdir)
-	require.Nil(t, StoreStateData(st, StateData{
-		Name:       MenderStateInit,
+	require.Nil(t, StoreStateData(st, datastore.StateData{
+		Name:       datastore.MenderStateInit,
 		UpdateInfo: datastore.UpdateInfo{},
 	}))
 
@@ -111,7 +111,7 @@ func TestTransitions(t *testing.T) {
 		to          *testState
 		expectedT   []stateScript
 		expectedS   State
-		stateStored MenderState
+		stateStored datastore.MenderState
 		closeStore  bool
 	}{
 		{from: &testState{t: ToIdle},
@@ -172,7 +172,7 @@ func TestTransitions(t *testing.T) {
 			expectedT: []stateScript{{"ArtifactInstall", "Leave"}, {"ArtifactReboot", "Enter"}},
 			expectedS: initState,
 			// To disable reboot hardening in reboot_enter, store reboot state in enter transition.
-			stateStored: MenderStateReboot,
+			stateStored: datastore.MenderStateReboot,
 		},
 	}
 
@@ -194,7 +194,7 @@ func TestTransitions(t *testing.T) {
 		s, c := mender.TransitionState(tt.to, &StateContext{store: st})
 		assert.IsType(t, tt.expectedS, s)
 		assert.False(t, c)
-		if tt.stateStored != MenderStateInit && !tt.closeStore {
+		if tt.stateStored != datastore.MenderStateInit && !tt.closeStore {
 			sd, err := LoadStateData(st)
 			require.Nil(t, err)
 			assert.EqualValues(t, tt.stateStored, sd.Name, "Unexpected menderstate stored")
@@ -272,7 +272,7 @@ func (sexec *stateScriptReportExecutor) CheckRootfsScriptsVersion() error {
 
 func TestTransitionReporting(t *testing.T) {
 
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		Artifact: struct {
 			Source struct {
 				URI    string

@@ -38,7 +38,7 @@ type stateTestController struct {
 	pollIntvl       time.Duration
 	retryIntvl      time.Duration
 	state           State
-	updateResp      *datastore.UpdateInfo
+	updateResp      datastore.UpdateInfo
 	updateRespErr   menderError
 	authorized      bool
 	authorizeErr    menderError
@@ -71,7 +71,7 @@ func (s *stateTestController) GetRetryPollInterval() time.Duration {
 }
 
 func (s *stateTestController) CheckUpdate() (*datastore.UpdateInfo, menderError) {
-	return s.updateResp, s.updateRespErr
+	return &s.updateResp, s.updateRespErr
 }
 
 func (s *stateTestController) FetchUpdate(url string) (io.ReadCloser, int64, error) {
@@ -118,6 +118,10 @@ func (s *stateTestController) InventoryRefresh() error {
 
 func (s *stateTestController) CheckScriptsCompatibility() error {
 	return nil
+}
+
+func (s *stateTestController) InstallArtifact(from io.ReadCloser, size int64) error {
+	return errors.New("Not implemented")
 }
 
 func (s *stateTestController) GetInstallers() []installer.UInstallCommitRebooter {
@@ -249,7 +253,7 @@ func TestStateUpdateError(t *testing.T) {
 }
 
 func TestStateUpdateReportStatus(t *testing.T) {
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foobar",
 	}
 
@@ -270,7 +274,7 @@ func TestStateUpdateReportStatus(t *testing.T) {
 	usr := NewUpdateStatusReportState(update, client.StatusFailure)
 	usr.Handle(&ctx, sc)
 	assert.Equal(t, client.StatusFailure, sc.reportStatus)
-	assert.Equal(t, *update, *sc.reportUpdate)
+	assert.Equal(t, *update, sc.reportUpdate)
 
 	assert.NotEmpty(t, sc.logs)
 	assert.JSONEq(t, `{
@@ -286,7 +290,7 @@ func TestStateUpdateReportStatus(t *testing.T) {
 	usr = NewUpdateStatusReportState(update, client.StatusSuccess)
 	usr.Handle(&ctx, sc)
 	assert.Equal(t, client.StatusSuccess, sc.reportStatus)
-	assert.Equal(t, *update, *sc.reportUpdate)
+	assert.Equal(t, *update, sc.reportUpdate)
 
 	// cancelled state should not wipe state data, for this pretend the reporting
 	// fails and cancel
@@ -300,7 +304,7 @@ func TestStateUpdateReportStatus(t *testing.T) {
 	assert.False(t, c)
 	sd, err := LoadStateData(ms)
 	assert.NoError(t, err)
-	assert.Equal(t, *update, *sd.UpdateInfo)
+	assert.Equal(t, *update, sd.UpdateInfo)
 	assert.Equal(t, client.StatusSuccess, sd.UpdateStatus)
 
 	poll := 5 * time.Millisecond
@@ -420,12 +424,12 @@ func TestStateInit(t *testing.T) {
 	assert.False(t, c)
 
 	// pretend we have state data
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foobar",
 	}
 	update.Artifact.ArtifactName = "fakeid"
 
-	StoreStateData(ms, StateData{
+	StoreStateData(ms, datastore.StateData{
 		Name:       datastore.MenderStateReboot,
 		UpdateInfo: *update,
 	})
@@ -449,7 +453,7 @@ func TestStateInit(t *testing.T) {
 	ms.Disable(false)
 
 	// pretend reading invalid state
-	StoreStateData(ms, StateData{
+	StoreStateData(ms, datastore.StateData{
 		UpdateInfo: *update,
 	})
 	s, c = i.Handle(&ctx, &stateTestController{
@@ -459,10 +463,10 @@ func TestStateInit(t *testing.T) {
 	})
 	assert.IsType(t, &UpdateErrorState{}, s)
 	use, _ := s.(*UpdateErrorState)
-	assert.Equal(t, *update, *use.update)
+	assert.Equal(t, *update, use.update)
 
 	// update-commit-leave behaviour
-	StoreStateData(ms, StateData{
+	StoreStateData(ms, datastore.StateData{
 		UpdateInfo: *update,
 		Name:       datastore.MenderStateUpdateCommit,
 	})
@@ -560,7 +564,7 @@ func TestStateUpdateCommit(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 	DeploymentLogger = NewDeploymentLogManager(tempDir)
 
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foobar",
 	}
 	cs := NewUpdateCommitState(update)
@@ -572,7 +576,7 @@ func TestStateUpdateCommit(t *testing.T) {
 	ctx := StateContext{
 		store: ms,
 	}
-	StoreStateData(ms, StateData{
+	StoreStateData(ms, datastore.StateData{
 		UpdateInfo: *update,
 	})
 	// commit without errors
@@ -667,7 +671,7 @@ func TestStateUpdateCheck(t *testing.T) {
 	assert.IsType(t, &UpdateFetchState{}, s)
 	assert.False(t, c)
 	ufs, _ := s.(*UpdateFetchState)
-	assert.Equal(t, *update, *ufs.update)
+	assert.Equal(t, *update, ufs.update)
 }
 
 func TestUpdateCheckSameImage(t *testing.T) {
@@ -700,7 +704,7 @@ func TestStateUpdateFetch(t *testing.T) {
 	DeploymentLogger = NewDeploymentLogManager(tempDir)
 
 	// pretend we have an update
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foobar",
 	}
 	cs := NewUpdateFetchState(update)
@@ -730,12 +734,12 @@ func TestStateUpdateFetch(t *testing.T) {
 	assert.IsType(t, &UpdateStoreState{}, s)
 	assert.False(t, c)
 	assert.Equal(t, client.StatusDownloading, sc.reportStatus)
-	assert.Equal(t, *update, *sc.reportUpdate)
+	assert.Equal(t, *update, sc.reportUpdate)
 
 	ud, err := LoadStateData(ms)
 	assert.NoError(t, err)
-	assert.Equal(t, StateData{
-		Version:    stateDataVersion,
+	assert.Equal(t, datastore.StateData{
+		Version:    datastore.StateDataVersion,
 		UpdateInfo: *update,
 		Name:       datastore.MenderStateUpdateFetch,
 	}, ud)
@@ -761,7 +765,7 @@ func TestStateUpdateFetch(t *testing.T) {
 
 func TestStateUpdateFetchRetry(t *testing.T) {
 	// pretend we have an update
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foobar",
 	}
 	cs := NewUpdateFetchState(update)
@@ -814,7 +818,7 @@ func TestStateUpdateStore(t *testing.T) {
 	data := "test"
 	stream := ioutil.NopCloser(bytes.NewBufferString(data))
 
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foo",
 	}
 	uis := NewUpdateStoreState(stream, int64(len(data)), update)
@@ -839,8 +843,8 @@ func TestStateUpdateStore(t *testing.T) {
 
 	ud, err := LoadStateData(ms)
 	assert.NoError(t, err)
-	assert.Equal(t, StateData{
-		Version:    stateDataVersion,
+	assert.Equal(t, datastore.StateData{
+		Version:    datastore.StateDataVersion,
 		UpdateInfo: *update,
 		Name:       datastore.MenderStateUpdateStore,
 	}, ud)
@@ -859,7 +863,7 @@ func TestStateUpdateInstallRetry(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 	DeploymentLogger = NewDeploymentLogManager(tempDir)
 
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foo",
 	}
 	data := "test"
@@ -916,7 +920,7 @@ func TestStateUpdateInstallRetry(t *testing.T) {
 }
 
 func TestStateReboot(t *testing.T) {
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foo",
 	}
 	rs := NewRebootState(update)
@@ -953,7 +957,7 @@ func TestStateReboot(t *testing.T) {
 }
 
 func TestStateRollback(t *testing.T) {
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foo",
 	}
 	rs := NewRollbackState(update, false)
@@ -985,8 +989,8 @@ func TestStateFinal(t *testing.T) {
 
 func TestStateData(t *testing.T) {
 	ms := store.NewMemStore()
-	sd := StateData{
-		Version: stateDataVersion,
+	sd := datastore.StateData{
+		Version: datastore.StateDataVersion,
 		Name:    datastore.MenderStateInit,
 		UpdateInfo: datastore.UpdateInfo{
 			ID: "foobar",
@@ -999,7 +1003,7 @@ func TestStateData(t *testing.T) {
 	assert.Equal(t, sd, rsd)
 
 	// test if data marshalling works fine
-	data, err := ms.ReadAll(stateDataKey)
+	data, err := ms.ReadAll(datastore.StateDataKey)
 	assert.NoError(t, err)
 	assert.Contains(t, string(data), `"Name":"init"`)
 
@@ -1008,17 +1012,17 @@ func TestStateData(t *testing.T) {
 	assert.NoError(t, err)
 	rsd, err = LoadStateData(ms)
 	assert.Error(t, err)
-	assert.Equal(t, StateData{}, rsd)
+	assert.Equal(t, datastore.StateData{}, rsd)
 	assert.Equal(t, sd.Version, 999)
 
-	ms.Remove(stateDataKey)
+	ms.Remove(datastore.StateDataKey)
 	_, err = LoadStateData(ms)
 	assert.Error(t, err)
 	assert.True(t, os.IsNotExist(err))
 }
 
 func TestStateReportError(t *testing.T) {
-	update := datastore.UpdateInfo{
+	update := &datastore.UpdateInfo{
 		ID: "foobar",
 	}
 
@@ -1037,7 +1041,7 @@ func TestStateReportError(t *testing.T) {
 
 	// store some state data, failing to report status with a failed update
 	// will just clean that up and
-	StoreStateData(ms, StateData{
+	StoreStateData(ms, datastore.StateData{
 		Name:       datastore.MenderStateReportStatusError,
 		UpdateInfo: *update,
 	})
@@ -1053,9 +1057,9 @@ func TestStateReportError(t *testing.T) {
 
 	// store some state data, failing to report status with an update that
 	// is already installed will also clean it up
-	StoreStateData(ms, StateData{
+	StoreStateData(ms, datastore.StateData{
 		Name:       datastore.MenderStateReportStatusError,
-		UpdateInfo: update,
+		UpdateInfo: *update,
 	})
 	// update is already installed and we failed to report that status to
 	// the server, state data should be removed and we should go back to

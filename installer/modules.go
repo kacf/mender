@@ -58,7 +58,6 @@ func (mod *ModuleInstaller) VerifyRollbackReboot() error {
 type ModuleInstallerFactory struct {
 	modulesPath     string
 	modulesWorkPath string
-	installers      []*ModuleInstaller
 }
 
 func NewModuleInstallerFactory(modulesPath, modulesWorkPath string) *ModuleInstallerFactory {
@@ -76,12 +75,4 @@ func (mf *ModuleInstallerFactory) NewUpdateStorer(payloadNum int) (handlers.Upda
 	}
 	mf.installers = append(mf.installers, mod)
 	return mod, nil
-}
-
-func (mf *ModuleInstallerFactory) GetProducedInstallers() []*ModuleInstaller {
-	return mf.installers
-}
-
-func (mf *ModuleInstallerFactory) ClearProducedInstallers() {
-	mf.installers = []*ModuleInstaller{}
 }

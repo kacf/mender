@@ -724,33 +724,18 @@ func (m *mender) InstallArtifact(from io.ReadCloser, size int64) error {
 		log.Errorf("Unable to verify the existing hardware. Update will continue anyways: %v : %v", defaultDeviceTypeFile, err)
 	}
 
-	m.modulesFactory.ClearProducedInstallers()
-
 	installerFactories := installer.UpdateStorerProducers{
 		DualRootfs: m.dualRootfsDevice,
 		Modules:    m.modulesFactory,
 	}
 
-	err = installer.Install(from,
+	m.installers, err = installer.Install(from,
 		deviceType,
 		m.GetArtifactVerifyKey(),
 		m.stateScriptPath,
 		&installerFactories,
 		true)
-	m.updateInstallers()
 	return err
-}
-
-func (m *mender) updateInstallers() {
-	m.installers = []installer.UInstallCommitRebooter{}
-	if m.dualRootfsDevice != nil {
-		m.installers = append(m.installers, m.dualRootfsDevice)
-	}
-
-	produced := m.modulesFactory.GetProducedInstallers()
-	for _, i := range produced {
-		m.installers = append(m.installers, i)
-	}
 }
 
 func (m *mender) GetInstallers() []installer.UInstallCommitRebooter {

@@ -16,13 +16,14 @@ package main
 import (
 	"fmt"
 	"io"
-	// "io/ioutil"
+	"io/ioutil"
 	"os"
 	"strings"
 
 	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender/client"
-	// "github.com/mendersoftware/mender/installer"
+	"github.com/mendersoftware/mender/installer"
+	"github.com/mendersoftware/mender/statescript"
 	"github.com/mendersoftware/mender/utils"
 	"github.com/mendersoftware/mender-artifact/handlers"
 	"github.com/pkg/errors"
@@ -83,20 +84,18 @@ func doRootfs(dualRootfsDevice handlers.UpdateStorerProducer, args runOptionsTyp
 	}
 	tr := io.TeeReader(image, p)
 
-	print(tr)
-	panic("TODO")
-	// err = installer.Install(ioutil.NopCloser(tr), dt, vKey, "", config.ModulesPath,
-	// 	config.ModulesWorkPath, dualRootfsDevice, *args.runStateScripts)
-	// if err != nil {
-	// 	log.Errorf("Installation failed: %s", err.Error())
-	// 	return err
-	// }
+	err = installer.Install(ioutil.NopCloser(tr), dt, vKey, "", config.ModulesPath,
+		config.ModulesWorkPath, dualRootfsDevice)
+	if err != nil {
+		log.Errorf("Installation failed: %s", err.Error())
+		return err
+	}
 
-	// err = dualRootfsDevice.InstallUpdate()
-	// if err != nil {
-	// 	log.Errorf("Enabling updated partition failed: %s", err.Error())
-	// 	return err
-	// }
+	err = dualRootfsDevice.InstallUpdate()
+	if err != nil {
+		log.Errorf("Enabling updated partition failed: %s", err.Error())
+		return err
+	}
 
 	return nil
 }

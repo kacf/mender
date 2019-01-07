@@ -50,7 +50,6 @@ type runOptionsType struct {
 	fallbackConfig  *string
 	dataStore       *string
 	imageFile       *string
-	runStateScripts *bool
 	commit          *bool
 	bootstrap       *bool
 	daemon          *bool
@@ -122,8 +121,6 @@ func argsParse(args []string) (runOptionsType, error) {
 		"Root filesystem URI to use for update. Can be either a local "+
 			"file or a URL.")
 
-	forceStateScripts := parsing.Bool("f", false, "force installation of artifacts with state-scripts")
-
 	daemon := parsing.Bool("daemon", false, "Run as a daemon.")
 
 	updateCheck := parsing.Bool("check-update", false, "force update check")
@@ -148,7 +145,6 @@ func argsParse(args []string) (runOptionsType, error) {
 		fallbackConfig:  fallbackConfig,
 		dataStore:       data,
 		imageFile:       imageFile,
-		runStateScripts: forceStateScripts,
 		commit:          commit,
 		bootstrap:       bootstrap,
 		daemon:          daemon,

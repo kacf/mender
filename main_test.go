@@ -54,14 +54,6 @@ func TestAmbiguousArgumentsArgs(t *testing.T) {
 	assert.Equal(t, errMsgAmbiguousArgumentsGiven, err)
 }
 
-func TestArgsParseRootfsForce(t *testing.T) {
-	args := []string{"-rootfs", "newImage", "-f"}
-	runOpts, err := argsParse(args)
-	assert.NoError(t, err)
-	assert.Equal(t, "newImage", *runOpts.imageFile)
-	assert.Equal(t, true, *runOpts.runStateScripts)
-}
-
 func TestArgsParseCheckUpdate(t *testing.T) {
 	args := []string{"-check-update"}
 	runOpts, err := argsParse(args)

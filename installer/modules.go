@@ -55,6 +55,14 @@ func (mod *ModuleInstaller) VerifyRollbackReboot() error {
 	return nil
 }
 
+func (mod *ModuleInstaller) Failure() error {
+	return nil
+}
+
+func (mod *ModuleInstaller) Cleanup() error {
+	return nil
+}
+
 type ModuleInstallerFactory struct {
 	modulesPath     string
 	modulesWorkPath string
@@ -73,6 +81,5 @@ func (mf *ModuleInstallerFactory) NewUpdateStorer(payloadNum int) (handlers.Upda
 		modulesPath:      mf.modulesPath,
 		modulesWorkPath:  mf.modulesWorkPath,
 	}
-	mf.installers = append(mf.installers, mod)
 	return mod, nil
 }

@@ -14,7 +14,6 @@
 package main
 
 import (
-	"errors"
 	"io"
 	"io/ioutil"
 	"os"
@@ -25,7 +24,8 @@ import (
 )
 
 func Test_doManualUpdate_noParams_fail(t *testing.T) {
-	if err := doRootfs(new(dualRootfsDeviceImpl), runOptionsType{}, "", nil, &menderConfig{}); err == nil {
+	config := menderConfig{}
+	if err := doStandaloneInstall(new(dualRootfsDeviceImpl), runOptionsType{}, "", nil, &config, newStateScriptExecutor(&config)); err == nil {
 		t.FailNow()
 	}
 }
@@ -36,7 +36,8 @@ func Test_doManualUpdate_invalidHttpsClientConfig_updateFails(t *testing.T) {
 	runOptions.imageFile = &iamgeFileName
 	runOptions.ServerCert = "non-existing"
 
-	if err := doRootfs(new(dualRootfsDeviceImpl), runOptions, "", nil, &menderConfig{}); err == nil {
+	config := menderConfig{}
+	if err := doStandaloneInstall(new(dualRootfsDeviceImpl), runOptions, "", nil, &config, newStateScriptExecutor(&config)); err == nil {
 		t.FailNow()
 	}
 }
@@ -47,7 +48,8 @@ func Test_doManualUpdate_nonExistingFile_fail(t *testing.T) {
 	imageFileName := "non-existing"
 	fakeRunOptions.imageFile = &imageFileName
 
-	if err := doRootfs(&fakeDevice, fakeRunOptions, "", nil, &menderConfig{}); err == nil {
+	config := menderConfig{}
+	if err := doStandaloneInstall(&fakeDevice, fakeRunOptions, "", nil, &config, newStateScriptExecutor(&config)); err == nil {
 		t.FailNow()
 	}
 }
@@ -58,7 +60,8 @@ func Test_doManualUpdate_networkUpdateNoClient_fail(t *testing.T) {
 	imageFileName := "http://non-existing"
 	fakeRunOptions.imageFile = &imageFileName
 
-	if err := doRootfs(&fakeDevice, fakeRunOptions, "", nil, &menderConfig{}); err == nil {
+	config := menderConfig{}
+	if err := doStandaloneInstall(&fakeDevice, fakeRunOptions, "", nil, &config, newStateScriptExecutor(&config)); err == nil {
 		t.FailNow()
 	}
 }
@@ -76,28 +79,8 @@ func Test_doManualUpdate_networkClientExistsNoServer_fail(t *testing.T) {
 			NoVerify:   false,
 		}
 
-	if err := doRootfs(&fakeDevice, fakeRunOptions, "", nil, &menderConfig{}); err == nil {
-		t.FailNow()
-	}
-}
-
-func Test_doManualUpdate_installFailing_updateFails(t *testing.T) {
-	fd := fakeDevice{}
-	fd.retStoreUpdate = errors.New("")
-	fakeRunOptions := runOptionsType{}
-	imageFileName := "imageFile"
-	fakeRunOptions.imageFile = &imageFileName
-	forceRunScriptsFlag := false
-	fakeRunOptions.runStateScripts = &forceRunScriptsFlag
-	image, _ := os.Create("imageFile")
-	imageContent := "test content"
-	image.WriteString(imageContent)
-	// rewind to the beginning of file
-	image.Seek(0, 0)
-
-	defer os.Remove("imageFile")
-
-	if err := doRootfs(fd, fakeRunOptions, "", nil, &menderConfig{}); err == nil {
+	config := menderConfig{}
+	if err := doStandaloneInstall(&fakeDevice, fakeRunOptions, "", nil, &config, newStateScriptExecutor(&config)); err == nil {
 		t.FailNow()
 	}
 }
@@ -123,9 +106,8 @@ func Test_doManualUpdate_existingFile_updateSuccess(t *testing.T) {
 	fakeRunOptions := runOptionsType{}
 	imageFileName := f.Name()
 	fakeRunOptions.imageFile = &imageFileName
-	forceRunScriptsFlag := false
-	fakeRunOptions.runStateScripts = &forceRunScriptsFlag
 
-	err = doRootfs(dev, fakeRunOptions, "vexpress-qemu", nil, &menderConfig{})
+	config := menderConfig{}
+	err = doStandaloneInstall(dev, fakeRunOptions, "vexpress-qemu", nil, &config, newStateScriptExecutor(&config))
 	assert.NoError(t, err)
 }

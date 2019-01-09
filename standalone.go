@@ -30,8 +30,8 @@ import (
 )
 
 // This will be run manually from command line ONLY
-func doRootfs(dualRootfsDevice handlers.UpdateStorerProducer, args runOptionsType, dt string,
-	vKey []byte, config *menderConfig) error {
+func doStandaloneInstall(dualRootfsDevice handlers.UpdateStorerProducer, args runOptionsType, dt string,
+	vKey []byte, config *menderConfig, stateExec statescript.Executor) error {
 	var image io.ReadCloser
 	var imageSize int64
 	var err error
@@ -84,20 +84,88 @@ func doRootfs(dualRootfsDevice handlers.UpdateStorerProducer, args runOptionsTyp
 	}
 	tr := io.TeeReader(image, p)
 
-	err = installer.Install(ioutil.NopCloser(tr), dt, vKey, "", config.ModulesPath,
-		config.ModulesWorkPath, dualRootfsDevice)
+	installerFactories := installer.UpdateStorerProducers{
+		DualRootfs: dualRootfsDevice,
+		Modules:    installer.NewModuleInstallerFactory(config.ModulesPath, config.ModulesWorkPath),
+	}
+
+	return doStandaloneInstallStates(ioutil.NopCloser(tr), dt, vKey, &installerFactories, stateExec)
+}
+
+func doStandaloneInstallStates(art io.ReadCloser, dt string, key []byte,
+	installerFactories *installer.UpdateStorerProducers, stateExec statescript.Executor) error {
+
+	// Download state
+	err := stateExec.ExecuteAll("Download", "Enter", false, nil)
 	if err != nil {
-		log.Errorf("Installation failed: %s", err.Error())
+		log.Errorf("Download_Enter script failed: %s", err.Error())
+		// No doStandaloneInstallFailure here, since we have not done anything yet.
+		return err
+	}
+	installers, err := installer.Install(art, dt, key, "", installerFactories)
+	if err != nil {
+		log.Errorf("Download failed: %s", err.Error())
+		doStandaloneInstallFailure(installers, stateExec, true)
+		return err
+	}
+	err = stateExec.ExecuteAll("Download", "Leave", false, nil)
+	if err != nil {
+		log.Errorf("Download_Leave script failed: %s", err.Error())
+		doStandaloneInstallFailure(installers, stateExec, true)
 		return err
 	}
 
-	err = dualRootfsDevice.InstallUpdate()
+	// ArtifactInstall state
+	err = stateExec.ExecuteAll("ArtifactInstall", "Enter", false, nil)
 	if err != nil {
-		log.Errorf("Enabling updated partition failed: %s", err.Error())
+		log.Errorf("ArtifactInstall_Enter script failed: %s", err.Error())
+		doStandaloneInstallFailure(installers, stateExec, false)
+		return err
+	}
+	for _, inst := range installers {
+		err = inst.InstallUpdate()
+		if err != nil {
+			log.Errorf("Installation failed: %s", err.Error())
+			doStandaloneInstallFailure(installers, stateExec, false)
+			return err
+		}
+	}
+	err = stateExec.ExecuteAll("ArtifactInstall", "Leave", false, nil)
+	if err != nil {
+		log.Errorf("ArtifactInstall_Leave script failed: %s", err.Error())
+		doStandaloneInstallFailure(installers, stateExec, false)
 		return err
 	}
 
 	return nil
+}
+
+func doStandaloneInstallFailure(installers []installer.PayloadInstaller, stateExec statescript.Executor, onlyCleanup bool) {
+	var err error
+
+	if !onlyCleanup {
+		err = stateExec.ExecuteAll("ArtifactFailure", "Enter", true, nil)
+		if err != nil {
+			log.Errorf("Error when executing ArtifactFailure_Enter scripts: %s", err.Error())
+		}
+		for _, inst := range installers {
+			err = inst.Failure()
+			if err != nil {
+				log.Errorf("Error when executing ArtifactFailure state: %s", err. Error())
+			}
+		}
+		err = stateExec.ExecuteAll("ArtifactFailure", "Leave", true, nil)
+		if err != nil {
+			log.Errorf("Error when executing ArtifactFailure_Leave scripts: %s", err.Error())
+		}
+	}
+
+	for _, inst := range installers {
+		err = inst.Cleanup()
+		if err != nil {
+			log.Errorf("Error when executing Cleanup state: %s", err. Error())
+		}
+	}
 }
 
 // FetchUpdateFromFile returns a byte stream of the given file, size of the file

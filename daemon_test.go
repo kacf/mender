@@ -79,6 +79,13 @@ func (f fakeDevice) VerifyRollbackReboot() error {
 	}
 }
 
+func (f fakeDevice) Failure() error {
+	return nil
+}
+func (f fakeDevice) Cleanup() error {
+	return nil
+}
+
 func (f fakeDevice) GetActive() (string, error) {
 	return "", errors.New("Not implemented")
 }

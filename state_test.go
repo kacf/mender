@@ -124,8 +124,8 @@ func (s *stateTestController) InstallArtifact(from io.ReadCloser, size int64) er
 	return errors.New("Not implemented")
 }
 
-func (s *stateTestController) GetInstallers() []installer.UInstallCommitRebooter {
-	return []installer.UInstallCommitRebooter{}
+func (s *stateTestController) GetInstallers() []installer.PayloadInstaller {
+	return []installer.PayloadInstaller{}
 }
 
 type waitStateTest struct {

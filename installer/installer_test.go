@@ -29,23 +29,32 @@ import (
 )
 
 func TestInstall(t *testing.T) {
+	noUpdateProducers := UpdateStorerProducers{}
+	updateProducers := UpdateStorerProducers{
+		DualRootfs: new(fDevice),
+	}
+
 	art, err := MakeRootfsImageArtifact(1, false, false)
 	assert.NoError(t, err)
 	assert.NotNil(t, art)
 
 	// image not compatible with device
-	err = Install(art, "fake-device", nil, "", "", "", nil, true)
+	_, err = Install(art, "fake-device", nil, "", &noUpdateProducers)
 	assert.Error(t, err)
 	assert.Contains(t, errors.Cause(err).Error(),
 		"not compatible with device fake-device")
 
 	art, err = MakeRootfsImageArtifact(1, false, false)
 	assert.NoError(t, err)
-	err = Install(art, "vexpress-qemu", nil, "", "", "", new(fDevice), true)
+	_, err = Install(art, "vexpress-qemu", nil, "", &updateProducers)
 	assert.NoError(t, err)
 }
 
 func TestInstallSigned(t *testing.T) {
+	updateProducers := UpdateStorerProducers{
+		DualRootfs: new(fDevice),
+	}
+
 	art, err := MakeRootfsImageArtifact(2, true, false)
 	assert.NoError(t, err)
 	assert.NotNil(t, art)
@@ -53,13 +62,13 @@ func TestInstallSigned(t *testing.T) {
 	// no key for verifying artifact
 	art, err = MakeRootfsImageArtifact(2, true, false)
 	assert.NoError(t, err)
-	err = Install(art, "vexpress-qemu", nil, "", "", "", new(fDevice), true)
+	_, err = Install(art, "vexpress-qemu", nil, "", &updateProducers)
 	assert.NoError(t, err)
 
 	// image not compatible with device
 	art, err = MakeRootfsImageArtifact(2, true, false)
 	assert.NoError(t, err)
-	err = Install(art, "fake-device", []byte(PublicRSAKey), "", "", "", new(fDevice), true)
+	_, err = Install(art, "fake-device", []byte(PublicRSAKey), "", &updateProducers)
 	assert.Error(t, err)
 	assert.Contains(t, errors.Cause(err).Error(),
 		"not compatible with device fake-device")
@@ -67,35 +76,43 @@ func TestInstallSigned(t *testing.T) {
 	// installation successful
 	art, err = MakeRootfsImageArtifact(2, true, false)
 	assert.NoError(t, err)
-	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", "", "", new(fDevice), true)
+	_, err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", &updateProducers)
 	assert.NoError(t, err)
 
 	// have a key but artifact is unsigned
 	art, err = MakeRootfsImageArtifact(2, false, false)
 	assert.NoError(t, err)
-	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", "", "", new(fDevice), true)
+	_, err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", &updateProducers)
 	assert.Error(t, err)
 
 	// have a key but artifact is v1
 	art, err = MakeRootfsImageArtifact(1, false, false)
 	assert.NoError(t, err)
-	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", "", "", new(fDevice), true)
+	_, err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", &updateProducers)
 	assert.Error(t, err)
 }
 
 func TestInstallNoSignature(t *testing.T) {
+	updateProducers := UpdateStorerProducers{
+		DualRootfs: new(fDevice),
+	}
+
 	art, err := MakeRootfsImageArtifact(2, false, false)
 	assert.NoError(t, err)
 	assert.NotNil(t, art)
 
 	// image does not contain signature
-	err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", "", "", new(fDevice), true)
+	_, err = Install(art, "vexpress-qemu", []byte(PublicRSAKey), "", &updateProducers)
 	assert.Error(t, err)
 	assert.Contains(t, errors.Cause(err).Error(),
 		"expecting signed artifact, but no signature file found")
 }
 
 func TestInstallWithScripts(t *testing.T) {
+	updateProducers := UpdateStorerProducers{
+		DualRootfs: new(fDevice),
+	}
+
 	art, err := MakeRootfsImageArtifact(2, false, true)
 	assert.NoError(t, err)
 	assert.NotNil(t, art)
@@ -104,18 +121,58 @@ func TestInstallWithScripts(t *testing.T) {
 	assert.NoError(t, err)
 	defer os.RemoveAll(scrDir)
 
-	err = Install(art, "vexpress-qemu", nil, scrDir, "", "", new(fDevice), true)
+	_, err = Install(art, "vexpress-qemu", nil, scrDir, &updateProducers)
 	assert.NoError(t, err)
+}
+
+func TestCorrectUpdateProducerReturned(t *testing.T) {
+	updateProducers := UpdateStorerProducers{
+		DualRootfs: new(fDevice),
+	}
+
+	art, err := MakeRootfsImageArtifact(2, false, true)
+	assert.NoError(t, err)
+	assert.NotNil(t, art)
+
+	returned, err := Install(art, "vexpress-qemu", nil, "", &updateProducers)
+	assert.NoError(t, err)
+
+	assert.Equal(t, 1, len(returned))
+	assert.Equal(t, updateProducers.DualRootfs, returned[0])
 }
 
 type fDevice struct{}
 
-func (d *fDevice) StoreUpdate(r io.ReadCloser, l int64) error {
+func (d *fDevice) StoreUpdate(r io.Reader, info os.FileInfo) error {
 	_, err := io.Copy(ioutil.Discard, r)
 	return err
 }
 
 func (d *fDevice) InstallUpdate() error { return nil }
+
+func (d *fDevice) Reboot() error {
+	return nil
+}
+
+func (d *fDevice) CommitUpdate() error {
+	return nil
+}
+
+func (d *fDevice) Rollback() error {
+	return nil
+}
+
+func (d *fDevice) VerifyReboot() error {
+	return nil
+}
+
+func (d *fDevice) VerifyRollbackReboot() error {
+	return nil
+}
+
+func (d *fDevice) NewUpdateStorer(payload int) (handlers.UpdateStorer, error) {
+	return d, nil
+}
 
 const (
 	PublicRSAKey = `-----BEGIN PUBLIC KEY-----

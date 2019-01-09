@@ -54,7 +54,7 @@ type Controller interface {
 	CheckScriptsCompatibility() error
 	InstallArtifact(from io.ReadCloser, size int64) error
 
-	GetInstallers() []installer.UInstallCommitRebooter
+	GetInstallers() []installer.PayloadInstaller
 
 	StateRunner
 }
@@ -107,7 +107,7 @@ func StateStatus(m datastore.MenderState) string {
 type mender struct {
 	dualRootfsDevice    dualRootfsDevice
 	modulesFactory      *installer.ModuleInstallerFactory
-	installers          []installer.UInstallCommitRebooter
+	installers          []installer.PayloadInstaller
 	updater             client.Updater
 	state               State
 	stateScriptExecutor statescript.Executor
@@ -134,14 +134,7 @@ func NewMender(config menderConfig, pieces MenderPieces) (*mender, error) {
 		return nil, errors.Wrap(err, "error creating HTTP client")
 	}
 
-	stateScrExec := statescript.Launcher{
-		ArtScriptsPath:          defaultArtScriptsPath,
-		RootfsScriptsPath:       defaultRootfsScriptsPath,
-		SupportedScriptVersions: []int{2},
-		Timeout:                 config.StateScriptTimeoutSeconds,
-		RetryTimeout:            config.StateScriptRetryIntervalSeconds,
-		RetryInterval:           config.StateScriptRetryTimeoutSeconds,
-	}
+	stateScrExec := newStateScriptExecutor(&config)
 
 	m := &mender{
 		dualRootfsDevice:    pieces.dualRootfsDevice,
@@ -166,6 +159,17 @@ func NewMender(config menderConfig, pieces MenderPieces) (*mender, error) {
 	}
 
 	return m, nil
+}
+
+func newStateScriptExecutor(config *menderConfig) statescript.Launcher {
+	return statescript.Launcher{
+		ArtScriptsPath:          defaultArtScriptsPath,
+		RootfsScriptsPath:       defaultRootfsScriptsPath,
+		SupportedScriptVersions: []int{2, 3},
+		Timeout:                 config.StateScriptTimeoutSeconds,
+		RetryTimeout:            config.StateScriptRetryIntervalSeconds,
+		RetryInterval:           config.StateScriptRetryTimeoutSeconds,
+	}
 }
 
 func getManifestData(dataType, manifestFile string) (string, error) {
@@ -733,11 +737,10 @@ func (m *mender) InstallArtifact(from io.ReadCloser, size int64) error {
 		deviceType,
 		m.GetArtifactVerifyKey(),
 		m.stateScriptPath,
-		&installerFactories,
-		true)
+		&installerFactories)
 	return err
 }
 
-func (m *mender) GetInstallers() []installer.UInstallCommitRebooter {
+func (m *mender) GetInstallers() []installer.PayloadInstaller {
 	return m.installers
 }

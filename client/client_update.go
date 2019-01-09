@@ -138,7 +138,7 @@ func validateGetUpdate(update datastore.UpdateInfo) error {
 
 	log.Infof("Correct request for getting image from: %s [name: %v; devices: %v]",
 		update.Artifact.Source.URI,
-		update.ArtifactName,
+		update.ArtifactName(),
 		update.Artifact.CompatibleDevices)
 	return nil
 }

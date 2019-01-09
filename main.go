@@ -467,7 +467,8 @@ func handleCLIOptions(runOptions runOptionsType, env *uBootEnv, dualRootfsDevice
 			log.Errorf("Unable to verify the existing hardware. Update will continue anyways: %v : %v", defaultDeviceTypeFile, err)
 		}
 		vKey := config.GetVerificationKey()
-		return doRootfs(dualRootfsDevice, runOptions, dt, vKey, config)
+		stateExec := newStateScriptExecutor(config)
+		return doStandaloneInstall(dualRootfsDevice, runOptions, dt, vKey, config, stateExec)
 
 	case *runOptions.commit:
 		if dualRootfsDevice == nil {

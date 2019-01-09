@@ -42,7 +42,7 @@ type dualRootfsDeviceImpl struct {
 
 // This interface is only here for tests.
 type dualRootfsDevice interface {
-	installer.UInstallCommitRebooter
+	installer.PayloadInstaller
 	handlers.UpdateStorerProducer
 	GetInactive() (string, error)
 	GetActive() (string, error)
@@ -257,6 +257,16 @@ func (d *dualRootfsDeviceImpl) VerifyRollbackReboot() error {
 	} else {
 		return nil
 	}
+}
+
+func (d *dualRootfsDeviceImpl) Failure() error {
+	// Nothing to do for rootfs updates.
+	return nil
+}
+
+func (d *dualRootfsDeviceImpl) Cleanup() error {
+	// Nothing to do for rootfs updates.
+	return nil
 }
 
 func (d *dualRootfsDeviceImpl) NewUpdateStorer(payloadNum int) (handlers.UpdateStorer, error) {

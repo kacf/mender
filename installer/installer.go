@@ -35,7 +35,7 @@ type Rebooter interface {
 	Reboot() error
 }
 
-type UInstallCommitRebooter interface {
+type PayloadInstaller interface {
 	UInstaller
 	Rebooter
 	CommitUpdate() error
@@ -44,6 +44,8 @@ type UInstallCommitRebooter interface {
 	VerifyReboot() error
 	// Verify that rebooting into the old update worked.
 	VerifyRollbackReboot() error
+	Failure() error
+	Cleanup() error
 }
 
 type UpdateStorerProducers struct {
@@ -52,10 +54,11 @@ type UpdateStorerProducers struct {
 }
 
 func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
-	inst *UpdateStorerProducers) ([]UInstallCommitRebooter, error) {
+	inst *UpdateStorerProducers) ([]PayloadInstaller, error) {
 
 	var ar *areader.Reader
-	var installers []UInstallCommitRebooter
+	var installers []PayloadInstaller
+	var err error
 
 	// if there is a verification key artifact must be signed
 	if key != nil {
@@ -68,7 +71,7 @@ func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
 	// Important for the client to forbid artifacts types we don't know.
 	ar.ForbidUnknownHandlers = true
 
-	if err := registerHandlers(ar, inst); err != nil {
+	if err = registerHandlers(ar, inst); err != nil {
 		return installers, err
 	}
 
@@ -113,7 +116,7 @@ func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
 
 	scr := statescript.NewStore(scrDir)
 	// we need to wipe out the scripts directory first
-	if err := scr.Clear(); err != nil {
+	if err = scr.Clear(); err != nil {
 		log.Errorf("installer: error initializing directory for scripts [%s]: %v",
 			scrDir, err)
 		return installers, errors.Wrap(err, "installer: error initializing directory for scripts")
@@ -122,15 +125,15 @@ func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
 	// All the scripts that are part of the artifact will be processed here.
 	ar.ScriptsReadCallback = func(r io.Reader, fi os.FileInfo) error {
 		log.Debugf("installer: processing script: %s", fi.Name())
-		return installer, scr.StoreScript(r, fi.Name())
+		return scr.StoreScript(r, fi.Name())
 	}
 
 	// read the artifact
-	if err := ar.ReadArtifact(); err != nil {
+	if err = ar.ReadArtifact(); err != nil {
 		return installers, errors.Wrap(err, "installer: failed to read and install update")
 	}
 
-	if err := scr.Finalize(ar.GetInfo().Version); err != nil {
+	if err = scr.Finalize(ar.GetInfo().Version); err != nil {
 		return installers, errors.Wrap(err, "installer: error finalizing writing scripts")
 	}
 
@@ -169,17 +172,19 @@ func registerHandlers(ar *areader.Reader, inst *UpdateStorerProducers) error {
 	return nil
 }
 
-func getInstallerList(ar *areader.Reader) ([]UInstallCommitRebooter, error) {
+func getInstallerList(ar *areader.Reader) ([]PayloadInstaller, error) {
+	empty := []PayloadInstaller{}
+
 	fromReader, err := ar.GetUpdateStorers()
 	if err != nil {
-		return err
+		return empty, err
 	}
 
-	list := make([]UInstallCommitRebooter, len(fromReader))
+	list := make([]PayloadInstaller, len(fromReader))
 	for i, us := range fromReader {
-		installer, ok := us.(UInstallCommitRebooter)
+		installer, ok := us.(PayloadInstaller)
 		if !ok {
-			return []UInstallCommitRebooter, errors.New("Artifact reader returned an unknown installer type")
+			return empty, errors.New("Artifact reader returned an unknown installer type")
 		}
 		list[i] = installer
 	}

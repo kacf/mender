@@ -568,13 +568,13 @@ func (u *UpdateFetchState) Handle(ctx *StateContext, c Controller) (State, bool)
 		return NewUpdateStatusReportState(&u.update, client.StatusFailure), false
 	}
 
-	in, size, err := c.FetchUpdate(u.update.URI())
+	in, _, err := c.FetchUpdate(u.update.URI())
 	if err != nil {
 		log.Errorf("update fetch failed: %s", err)
 		return NewFetchStoreRetryState(u, &u.update, err), false
 	}
 
-	return NewUpdateStoreState(in, size, &u.update), false
+	return NewUpdateStoreState(in, &u.update), false
 }
 
 func (uf *UpdateFetchState) Update() *datastore.UpdateInfo {
@@ -586,11 +586,9 @@ type UpdateStoreState struct {
 	update datastore.UpdateInfo
 	// reader for obtaining image data
 	imagein io.ReadCloser
-	// expected image size
-	size int64
 }
 
-func NewUpdateStoreState(in io.ReadCloser, size int64, update *datastore.UpdateInfo) State {
+func NewUpdateStoreState(in io.ReadCloser, update *datastore.UpdateInfo) State {
 	return &UpdateStoreState{
 		baseState{
 			id: datastore.MenderStateUpdateStore,
@@ -598,7 +596,6 @@ func NewUpdateStoreState(in io.ReadCloser, size int64, update *datastore.UpdateI
 		},
 		*update,
 		in,
-		size,
 	}
 }
 
@@ -627,7 +624,7 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 		return NewUpdateStatusReportState(&u.update, client.StatusFailure), false
 	}
 
-	if err := c.InstallArtifact(u.imagein, u.size); err != nil {
+	if err := c.InstallArtifact(u.imagein); err != nil {
 		log.Errorf("update install failed: %s", err)
 		return NewFetchStoreRetryState(u, &u.update, err), false
 	}

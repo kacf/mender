@@ -52,7 +52,7 @@ type Controller interface {
 	UploadLog(update *datastore.UpdateInfo, logs []byte) menderError
 	InventoryRefresh() error
 	CheckScriptsCompatibility() error
-	InstallArtifact(from io.ReadCloser, size int64) error
+	InstallArtifact(from io.ReadCloser) error
 
 	GetInstallers() []installer.PayloadInstaller
 
@@ -722,7 +722,7 @@ func (m *mender) CheckScriptsCompatibility() error {
 	return m.stateScriptExecutor.CheckRootfsScriptsVersion()
 }
 
-func (m *mender) InstallArtifact(from io.ReadCloser, size int64) error {
+func (m *mender) InstallArtifact(from io.ReadCloser) error {
 	deviceType, err := m.GetDeviceType()
 	if err != nil {
 		log.Errorf("Unable to verify the existing hardware. Update will continue anyways: %v : %v", defaultDeviceTypeFile, err)

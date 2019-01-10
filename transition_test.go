@@ -326,7 +326,7 @@ func TestTransitionReporting(t *testing.T) {
 			expected: true,
 		},
 		{
-			state:    NewUpdateStoreState(nil, 0, update),
+			state:    NewUpdateStoreState(nil, update),
 			expected: true,
 		},
 		{

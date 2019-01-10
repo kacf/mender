@@ -29,6 +29,7 @@ import (
 	"github.com/mendersoftware/mender/installer"
 	"github.com/mendersoftware/mender/store"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type stateTestController struct {
@@ -120,12 +121,21 @@ func (s *stateTestController) CheckScriptsCompatibility() error {
 	return nil
 }
 
-func (s *stateTestController) InstallArtifact(from io.ReadCloser, size int64) error {
-	return errors.New("Not implemented")
+func (s *stateTestController) InstallArtifact(from io.ReadCloser) error {
+	installerFactories := installer.UpdateStorerProducers{
+		DualRootfs: s.fakeDevice,
+	}
+
+	_, err := installer.Install(from,
+		"vexpress-qemu",
+		nil,
+		"",
+		&installerFactories)
+	return err
 }
 
 func (s *stateTestController) GetInstallers() []installer.PayloadInstaller {
-	return []installer.PayloadInstaller{}
+	return []installer.PayloadInstaller{s.fakeDevice}
 }
 
 type waitStateTest struct {
@@ -746,7 +756,6 @@ func TestStateUpdateFetch(t *testing.T) {
 
 	uis, _ := s.(*UpdateStoreState)
 	assert.Equal(t, stream, uis.imagein)
-	assert.Equal(t, int64(len(data)), uis.size)
 
 	ms.ReadOnly(true)
 	// pretend writing update state data fails
@@ -815,27 +824,31 @@ func TestStateUpdateStore(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 	DeploymentLogger = NewDeploymentLogManager(tempDir)
 
-	data := "test"
-	stream := ioutil.NopCloser(bytes.NewBufferString(data))
+	stream, err := MakeRootfsImageArtifact(3, false)
+	require.NoError(t, err)
 
 	update := &datastore.UpdateInfo{
 		ID: "foo",
 	}
-	uis := NewUpdateStoreState(stream, int64(len(data)), update)
+	uis := NewUpdateStoreState(stream, update)
 
 	ms := store.NewMemStore()
 	ctx := StateContext{
 		store: ms,
 	}
 
+	sc := &stateTestController{
+		fakeDevice: fakeDevice{
+			consumeUpdate: true,
+		},
+	}
+
 	ms.ReadOnly(true)
 	// pretend writing update state data fails
-	sc := &stateTestController{}
 	s, c := uis.Handle(&ctx, sc)
 	assert.IsType(t, &UpdateStatusReportState{}, s)
 	ms.ReadOnly(false)
 
-	sc = &stateTestController{}
 	s, c = uis.Handle(&ctx, sc)
 	assert.IsType(t, &UpdateInstallState{}, s)
 	assert.False(t, c)
@@ -868,7 +881,7 @@ func TestStateUpdateInstallRetry(t *testing.T) {
 	}
 	data := "test"
 	stream := ioutil.NopCloser(bytes.NewBufferString(data))
-	uis := NewUpdateStoreState(stream, int64(len(data)), update)
+	uis := NewUpdateStoreState(stream, update)
 	ms := store.NewMemStore()
 	ctx := StateContext{
 		store: ms,
@@ -938,19 +951,26 @@ func TestStateReboot(t *testing.T) {
 	assert.IsType(t, &RollbackState{}, s)
 	assert.False(t, c)
 
-	sc := &stateTestController{}
+	sc := &stateTestController{
+		fakeDevice: fakeDevice{
+			retHasUpdate: true,
+		},
+	}
 	s, c = rs.Handle(&ctx, sc)
-	assert.IsType(t, &FinalState{}, s)
+	assert.IsType(t, &AfterRebootState{}, s)
 	assert.False(t, c)
 	assert.Equal(t, client.StatusRebooting, sc.reportStatus)
 	// reboot will be performed regardless of failures to write update state data
-	s, c = rs.Handle(&ctx, sc)
-	assert.IsType(t, &FinalState{}, s)
+	s, c = s.Handle(&ctx, sc)
+	assert.IsType(t, &UpdateCommitState{}, s)
 	assert.False(t, c)
 
 	// pretend update was aborted
 	sc = &stateTestController{
 		reportError: NewFatalError(client.ErrDeploymentAborted),
+		fakeDevice: fakeDevice{
+			retHasUpdate: true,
+		},
 	}
 	s, c = rs.Handle(&ctx, sc)
 	assert.IsType(t, &RollbackState{}, s)

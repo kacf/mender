@@ -816,16 +816,27 @@ func MakeRootfsImageArtifact(version int, signed bool) (io.ReadCloser, error) {
 		u = handlers.NewRootfsV1(upd)
 	case 2:
 		u = handlers.NewRootfsV2(upd)
+	case 3:
+		u = handlers.NewRootfsV3(upd)
 	}
 
 	updates := &awriter.Updates{Updates: []handlers.Composer{u}}
 	err = aw.WriteArtifact(&awriter.WriteArtifactArgs{
-		Format:  "mender",
-		Version: version,
-		Devices: []string{"vexpress-qemu"},
-		Name:    "mender-1.1",
-		Updates: updates,
-		Scripts: nil,
+		Format:   "mender",
+		Version:  version,
+		Devices:  []string{"vexpress-qemu"},
+		Name:     "mender-1.1",
+		Updates:  updates,
+		Scripts:  nil,
+		Provides: &artifact.ArtifactProvides{
+			ArtifactName: "TestName",
+			SupportedUpdateTypes: []string{"rootfs-image"},
+		},
+		Depends: &artifact.ArtifactDepends{
+			CompatibleDevices: []string{"vexpress-qemu"},
+		},
+		TypeInfoV3: &artifact.TypeInfoV3{
+		},
 	})
 	if err != nil {
 		return nil, err
@@ -862,14 +873,14 @@ func TestMenderStoreUpdate(t *testing.T) {
 	// try some failure scenarios first
 
 	// EOF
-	err := mender.InstallArtifact(ioutil.NopCloser(&bytes.Buffer{}), 0)
+	err := mender.InstallArtifact(ioutil.NopCloser(&bytes.Buffer{}))
 	assert.Error(t, err)
 	t.Logf("error: %v", err)
 
 	// some error from reader
 	mr := mockReader{}
 	mr.On("Read").Return(0, errors.New("failed"))
-	err = mender.InstallArtifact(ioutil.NopCloser(&mr), 0)
+	err = mender.InstallArtifact(ioutil.NopCloser(&mr))
 	assert.Error(t, err)
 	t.Logf("error: %v", err)
 
@@ -880,7 +891,7 @@ func TestMenderStoreUpdate(t *testing.T) {
 
 	// setup soem bogus device_type so that we don't match the update
 	ioutil.WriteFile(deviceType, []byte("device_type=bogusdevicetype\n"), 0644)
-	err = mender.InstallArtifact(upd, 0)
+	err = mender.InstallArtifact(upd)
 	assert.Error(t, err)
 
 	// try with a legit device_type
@@ -889,7 +900,7 @@ func TestMenderStoreUpdate(t *testing.T) {
 	assert.NotNil(t, upd)
 
 	ioutil.WriteFile(deviceType, []byte("device_type=vexpress-qemu\n"), 0644)
-	err = mender.InstallArtifact(upd, 0)
+	err = mender.InstallArtifact(upd)
 	assert.NoError(t, err)
 
 	// now try with device throwing errors durin ginstall
@@ -905,7 +916,7 @@ func TestMenderStoreUpdate(t *testing.T) {
 		},
 	)
 	mender.deviceTypeFile = deviceType
-	err = mender.InstallArtifact(upd, 0)
+	err = mender.InstallArtifact(upd)
 	assert.Error(t, err)
 
 }

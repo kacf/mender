@@ -830,7 +830,6 @@ func MakeRootfsImageArtifact(version int, signed bool) (io.ReadCloser, error) {
 		Scripts:  nil,
 		Provides: &artifact.ArtifactProvides{
 			ArtifactName: "TestName",
-			SupportedUpdateTypes: []string{"rootfs-image"},
 		},
 		Depends: &artifact.ArtifactDepends{
 			CompatibleDevices: []string{"vexpress-qemu"},

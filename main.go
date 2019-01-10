@@ -60,7 +60,7 @@ type runOptionsType struct {
 }
 
 var (
-	errMsgNoArgumentsGiven = errors.New("Must give one of -rootfs, " +
+	errMsgNoArgumentsGiven = errors.New("Must give one of -install, " +
 		"-commit, -bootstrap or -daemon arguments")
 	errMsgAmbiguousArgumentsGiven = errors.New("Ambiguous parameters given " +
 		"- must give exactly one from: -rootfs, -commit, -bootstrap, -authorize or -daemon")
@@ -117,9 +117,8 @@ func argsParse(args []string) (runOptionsType, error) {
 
 	showArtifact := parsing.Bool("show-artifact", false, "print the current artifact name to the command line and exit")
 
-	imageFile := parsing.String("rootfs", "",
-		"Root filesystem URI to use for update. Can be either a local "+
-			"file or a URL.")
+	imageFile := parsing.String("install", "",
+		"Mender Artifact to install. Can be either a local file or a URL.")
 
 	daemon := parsing.Bool("daemon", false, "Run as a daemon.")
 

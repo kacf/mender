@@ -178,7 +178,7 @@ func (d *fDevice) Cleanup() error {
 	return nil
 }
 
-func (d *fDevice) NewUpdateStorer(payload int) (handlers.UpdateStorer, error) {
+func (d *fDevice) NewUpdateStorer(updateType string, payload int) (handlers.UpdateStorer, error) {
 	return d, nil
 }
 

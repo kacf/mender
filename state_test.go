@@ -16,9 +16,11 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path"
 	"testing"
 	"time"
@@ -28,6 +30,9 @@ import (
 	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/installer"
 	"github.com/mendersoftware/mender/store"
+	"github.com/mendersoftware/mender-artifact/artifact"
+	"github.com/mendersoftware/mender-artifact/awriter"
+	"github.com/mendersoftware/mender-artifact/handlers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1101,4 +1106,204 @@ func TestMaxSendingAttempts(t *testing.T) {
 	assert.Equal(t, 10, maxSendingAttempts(5*time.Second, time.Second, 3))
 	assert.Equal(t, minReportSendRetries,
 		maxSendingAttempts(time.Second, time.Second, minReportSendRetries))
+}
+
+type menderWithCustomUpdater struct {
+	mender
+	updater fakeUpdater
+}
+
+func (m *menderWithCustomUpdater) ReportUpdateStatus(update *datastore.UpdateInfo, status string) menderError {
+	return nil
+}
+
+func (m *menderWithCustomUpdater) FetchUpdate(url string) (io.ReadCloser, int64, error) {
+	return m.updater.FetchUpdate(nil, url)
+}
+
+type stateTransitionsWithUpdateModulesTestCase struct {
+	caseName          string
+	stateChain        []State
+	errorStates       []State
+	spontRebootStates []State
+}
+
+var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModulesTestCase = []stateTransitionsWithUpdateModulesTestCase{
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Entering store state",
+		stateChain: []State{
+			&UpdateStoreState{},
+		},
+	},
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Test loop",
+		stateChain: []State{
+			&UpdateStoreState{},
+			&UpdateStoreState{},
+			&UpdateStoreState{},
+		},
+	},
+}
+
+func TestStateTransitionsWithUpdateModules(t *testing.T) {
+	env, ok := os.LookupEnv("TestStateTransitionsWithUpdateModules")
+	if ok && env == "subProcess" {
+		// We are in the subprocess, run actual test case.
+		for _, testCase := range stateTransitionsWithUpdateModulesTestCases {
+			if os.Getenv("caseName") == testCase.caseName {
+				subTestStateTransitionsWithUpdateModules(t, &testCase)
+				return
+			}
+		}
+		t.Errorf("Could not find test case \"%s\" in list", os.Getenv("caseName"))
+	}
+
+	// Run test in sub command so that we can use kill during the test.
+	for _, c := range stateTransitionsWithUpdateModulesTestCases {
+		t.Run(c.caseName, func(t *testing.T){
+			cmd := exec.Command(os.Args[0], os.Args[1:]...)
+			cmd.Env = append(cmd.Env, "TestStateTransitionsWithUpdateModules=subProcess")
+			cmd.Env = append(cmd.Env, fmt.Sprintf("caseName=%s", c.caseName))
+			cmd.Stderr = cmd.Stdout
+			output, err := cmd.Output()
+			t.Log(string(output))
+			if err != nil {
+				t.Error(err.Error())
+			}
+		})
+	}
+}
+
+func makeTestUpdateModule(t *testing.T, path string) {
+	fd, err := os.OpenFile(path, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0755)
+	require.NoError(t, err)
+	defer fd.Close()
+
+	fd.Write([]byte(`#!/bin/bash
+exit 0
+`))
+}
+
+func updateModulesSetup(t *testing.T,
+	c *stateTransitionsWithUpdateModulesTestCase,
+	tmpdir string) (*StateContext, Controller) {
+
+	require.NoError(t, os.MkdirAll(path.Join(tmpdir, "var/lib/mender"), 0755))
+	require.NoError(t, os.MkdirAll(path.Join(tmpdir, "etc/mender"), 0755))
+
+	artPath := path.Join(tmpdir, "artifact.mender")
+	require.NoError(t, makeImageForUpdateModules(artPath))
+
+	require.NoError(t, os.Mkdir(path.Join(tmpdir, "logs"), 0755))
+	DeploymentLogger = NewDeploymentLogManager(path.Join(tmpdir, "logs"))
+
+	require.NoError(t, os.Mkdir(path.Join(tmpdir, "db"), 0755))
+	store := store.NewDBStore(path.Join(tmpdir, "db"))
+
+	ctx := StateContext{
+		store: store,
+	}
+	menderPieces := MenderPieces{
+		store: store,
+	}
+
+	config := menderConfig{
+		menderConfigFromFile: menderConfigFromFile{
+			Servers: []client.MenderServer{
+				client.MenderServer{
+					ServerURL: "https://not-used",
+				},
+			},
+		},
+		ModulesPath:     path.Join(tmpdir, "modules"),
+		ModulesWorkPath: path.Join(tmpdir, "work"),
+	}
+
+	require.NoError(t, os.MkdirAll(config.ModulesPath, 0755))
+	makeTestUpdateModule(t, path.Join(config.ModulesPath, "test-type"))
+
+	mender, err := NewMender(config, menderPieces)
+	require.NoError(t, err)
+	controller := menderWithCustomUpdater{
+		mender: *mender,
+	}
+
+	deviceTypeFile := path.Join(tmpdir, "device_type")
+	deviceTypeFd, err := os.OpenFile(deviceTypeFile, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0644)
+	require.NoError(t, err)
+	defer deviceTypeFd.Close()
+	deviceTypeFd.Write([]byte("device_type=test-device\n"))
+
+	controller.deviceTypeFile = deviceTypeFile
+	controller.stateScriptPath = path.Join(tmpdir, "scripts")
+
+	updateStream, err := os.Open(artPath)
+	controller.updater.fetchUpdateReturnReadCloser = updateStream
+
+	// Avoid waiting by setting a short retry time.
+	client.ExponentialBackoffSmallestUnit = time.Millisecond
+
+	return &ctx, &controller
+}
+
+// This entire function is executed in a sub process, so we can freely mess with
+// the client state without cleaning up, and even kill it.
+func subTestStateTransitionsWithUpdateModules(t *testing.T, c *stateTransitionsWithUpdateModulesTestCase) {
+	tmpdir, err := ioutil.TempDir("", "TestStateTransitionsWithUpdateModules")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpdir)
+
+	ctx, controller := updateModulesSetup(t, c, tmpdir)
+
+	// Shortcut into update fetch state.
+	update := datastore.UpdateInfo{}
+	update.Artifact.CompatibleDevices = []string{"test-device"}
+	update.Artifact.ArtifactName = "test-name"
+	update.ID = "abcdefg"
+	state := NewUpdateFetchState(&update)
+
+	for _, expectedState := range c.stateChain {
+		var cancelled bool
+		state, cancelled = state.Handle(ctx, controller)
+		assert.False(t, cancelled)
+		assert.IsType(t, expectedState, state)
+	}
+}
+
+func makeImageForUpdateModules(path string) error {
+	depends := artifact.ArtifactDepends{
+		CompatibleDevices: []string{"test-device"},
+	}
+	provides := artifact.ArtifactProvides{
+		ArtifactName: "artifact-name",
+	}
+	typeInfoV3 := artifact.TypeInfoV3{
+		Type:             "test-module",
+	}
+	upd := awriter.Updates{
+		Updates: []handlers.Composer{handlers.NewModuleImage("test-type")},
+	}
+	args := awriter.WriteArtifactArgs{
+		Format:            "mender",
+		Version:           3,
+		Devices:           []string{"test-device"},
+		Name:              "test-name",
+		Updates:           &upd,
+		Scripts:           &artifact.Scripts{},
+		Depends:           &depends,
+		Provides:          &provides,
+		TypeInfoV3:        &typeInfoV3,
+		MetaData:          nil,
+		AugmentTypeInfoV3: nil,
+		AugmentMetaData:   nil,
+	}
+
+	fd, err := os.OpenFile(path, os.O_CREATE | os.O_WRONLY | os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer fd.Close()
+	writer := awriter.NewWriter(fd)
+
+	return writer.WriteArtifact(&args)
 }

@@ -94,7 +94,7 @@ func (f fakeDevice) GetInactive() (string, error) {
 	return "", errors.New("Not implemented")
 }
 
-func (f fakeDevice) NewUpdateStorer(int) (handlers.UpdateStorer, error) {
+func (f fakeDevice) NewUpdateStorer(string, int) (handlers.UpdateStorer, error) {
 	return &f, nil
 }
 

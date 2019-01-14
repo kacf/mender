@@ -50,7 +50,7 @@ type PayloadInstaller interface {
 
 type UpdateStorerProducers struct {
 	DualRootfs handlers.UpdateStorerProducer
-	Modules    handlers.UpdateStorerProducer
+	Modules    *ModuleInstallerFactory
 }
 
 func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
@@ -159,7 +159,7 @@ func registerHandlers(ar *areader.Reader, inst *UpdateStorerProducers) error {
 	}
 
 	// Update modules.
-	updateTypes := []string{"test-type"}
+	updateTypes := inst.Modules.GetModuleTypes()
 	for _, updateType := range updateTypes {
 		moduleImage := handlers.NewModuleImage(updateType)
 		moduleImage.SetUpdateStorerProducer(inst.Modules)

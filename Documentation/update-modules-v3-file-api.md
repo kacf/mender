@@ -212,10 +212,15 @@ becomes active again.
 
 **[Unimplemented]**
 
-`ArtifactRollbackReboot` executes whenever:
+`ArtifactRollbackReboot` executes either if all of these conditions are true:
 
 * `NeedsArtifactReboot` query has returned `Yes`
 * `ArtifactVerifyReboot` has executed successfully
+* `ArtifactRollback` has executed
+
+or if all of these conditions are true:
+
+* A spontaneous reboot has happened during any earlier state
 * `ArtifactRollback` has executed
 
 As an alternative to invoking `ArtifactRollbackReboot`, Mender instead calls the

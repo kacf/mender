@@ -269,7 +269,7 @@ func (d *dualRootfsDeviceImpl) Cleanup() error {
 	return nil
 }
 
-func (d *dualRootfsDeviceImpl) NewUpdateStorer(payloadNum int) (handlers.UpdateStorer, error) {
+func (d *dualRootfsDeviceImpl) NewUpdateStorer(updateType string, payloadNum int) (handlers.UpdateStorer, error) {
 	// We don't maintain any particular state for each payload, just return
 	// the same object.
 	return d, nil
@@ -278,6 +278,6 @@ func (d *dualRootfsDeviceImpl) NewUpdateStorer(payloadNum int) (handlers.UpdateS
 type missingDualRootfsDevice struct {
 }
 
-func (m *missingDualRootfsDevice) NewUpdateStorer(payloadNum int) (handlers.UpdateStorer, error) {
+func (m *missingDualRootfsDevice) NewUpdateStorer(updateType string, payloadNum int) (handlers.UpdateStorer, error) {
 	return nil, errors.New("No dual rootfs configuration present")
 }

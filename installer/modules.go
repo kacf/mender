@@ -15,9 +15,18 @@
 package installer
 
 import (
+	"bufio"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
+	"os/exec"
+	"path"
+	"strings"
+	"time"
 
+	"github.com/pkg/errors"
+	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender-artifact/handlers"
 )
 
@@ -25,6 +34,77 @@ type ModuleInstaller struct {
 	payloadIndex    int
 	modulesPath     string
 	modulesWorkPath string
+	updateType      string
+	workDir         string
+	programPath     string
+}
+
+func (mod *ModuleInstaller) callModule(state string, capture bool) (string, error) {
+	cmd := exec.Command(mod.programPath, state)
+	cmd.Stderr = cmd.Stdout
+	outputPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	err = cmd.Start()
+	if err != nil {
+		log.Errorf("Could not execute update module: %s", err.Error())
+		return "", err
+	}
+
+	log.Errorln("TODO, FIX THIS INTERVAL")
+	killer := time.AfterFunc(5 * time.Second, func(){
+		cmd.Process.Kill()
+	})
+	defer killer.Stop()
+	hardKiller := time.AfterFunc(2 * 5 * time.Second, func(){
+		cmd.Process.Signal(os.Kill)
+	})
+	defer hardKiller.Stop()
+
+	waitChannel := make(chan error)
+	go func() {
+		waitChannel <- cmd.Wait()
+	}()
+	waitTimer := time.NewTimer(3 * 5 * time.Second)
+	defer waitTimer.Stop()
+
+	var output string
+	lineReader := bufio.NewReader(outputPipe)
+	for true {
+		line, err := lineReader.ReadString(byte('\n'))
+		if err != nil && err != io.EOF {
+			log.Errorf("Reading from update module yielded error: %s", err.Error())
+			return output, err
+		}
+		line = strings.TrimRight(line, "\n")
+
+		if capture {
+			log.Debugf("Update module output: %s", line)
+			output = output + line
+		} else {
+			log.Infof("Update module output: %s", line)
+		}
+
+		if err == io.EOF {
+			break
+		}
+	}
+
+	select {
+	case err := <-waitChannel:
+		if err != nil {
+			log.Errorf("Update module terminated abnormally: %s", err.Error())
+			return output, err
+		}
+
+	case <-waitTimer.C:
+		msg := "Unable to kill process"
+		log.Errorln(msg)
+		return output, errors.New(msg)
+	}
+
+	return output, nil
 }
 
 func (mod *ModuleInstaller) StoreUpdate(r io.Reader, info os.FileInfo) error {
@@ -32,7 +112,8 @@ func (mod *ModuleInstaller) StoreUpdate(r io.Reader, info os.FileInfo) error {
 }
 
 func (mod *ModuleInstaller) InstallUpdate() error {
-	return nil
+	_, err := mod.callModule("ArtifactInstall", false)
+	return err
 }
 
 func (mod *ModuleInstaller) Reboot() error {
@@ -75,11 +156,42 @@ func NewModuleInstallerFactory(modulesPath, modulesWorkPath string) *ModuleInsta
 	}
 }
 
-func (mf *ModuleInstallerFactory) NewUpdateStorer(payloadNum int) (handlers.UpdateStorer, error) {
+func (mf *ModuleInstallerFactory) NewUpdateStorer(updateType string, payloadNum int) (handlers.UpdateStorer, error) {
+	numStr := fmt.Sprintf("%04d", payloadNum)
 	mod := &ModuleInstaller{
 		payloadIndex:     payloadNum,
 		modulesPath:      mf.modulesPath,
 		modulesWorkPath:  mf.modulesWorkPath,
+		workDir:          path.Join(mf.modulesWorkPath, numStr),
+		updateType:       updateType,
+		programPath:      path.Join(mf.modulesPath, updateType),
 	}
 	return mod, nil
+}
+
+func (mf *ModuleInstallerFactory) GetModuleTypes() []string {
+	fileList, err := ioutil.ReadDir(mf.modulesPath)
+	if err != nil {
+		log.Infof("Update Module path \"%s\" could not be opened (%s). Update modules will not available",
+			mf.modulesPath, err.Error())
+		return []string{}
+	}
+
+	moduleList := make([]string, 0, len(fileList))
+	for _, file := range fileList {
+		if file.IsDir() {
+			log.Errorf("Update module %s is a directory",
+				path.Join(mf.modulesPath, file.Name()))
+			continue
+		}
+		if (file.Mode() & 0111) == 0 {
+			log.Errorf("Update module %s is not executable",
+				path.Join(mf.modulesPath, file.Name()))
+			continue
+		}
+
+		moduleList = append(moduleList, file.Name())
+	}
+
+	return moduleList
 }

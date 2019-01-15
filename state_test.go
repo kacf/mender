@@ -1124,8 +1124,7 @@ func (m *menderWithCustomUpdater) FetchUpdate(url string) (io.ReadCloser, int64,
 type stateTransitionsWithUpdateModulesTestCase struct {
 	caseName          string
 	stateChain        []State
-	errorStates       []State
-	spontRebootStates []State
+	spontRebootStates []string
 }
 
 var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModulesTestCase = []stateTransitionsWithUpdateModulesTestCase{
@@ -1134,6 +1133,15 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 		stateChain: []State{
 			&UpdateStoreState{},
 		},
+	},
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Test kill",
+		stateChain: []State{
+			&UpdateStoreState{},
+			&UpdateStoreState{},
+			&UpdateStoreState{},
+		},
+		spontRebootStates: []string{"ArtifactInstall"},
 	},
 	stateTransitionsWithUpdateModulesTestCase{
 		caseName: "Test loop",
@@ -1151,7 +1159,9 @@ func TestStateTransitionsWithUpdateModules(t *testing.T) {
 		// We are in the subprocess, run actual test case.
 		for _, testCase := range stateTransitionsWithUpdateModulesTestCases {
 			if os.Getenv("caseName") == testCase.caseName {
-				subTestStateTransitionsWithUpdateModules(t, &testCase)
+				subTestStateTransitionsWithUpdateModules(t,
+					&testCase,
+					os.Getenv("tmpdir"))
 				return
 			}
 		}
@@ -1161,9 +1171,16 @@ func TestStateTransitionsWithUpdateModules(t *testing.T) {
 	// Run test in sub command so that we can use kill during the test.
 	for _, c := range stateTransitionsWithUpdateModulesTestCases {
 		t.Run(c.caseName, func(t *testing.T){
+			tmpdir, err := ioutil.TempDir("", "TestStateTransitionsWithUpdateModules")
+			require.NoError(t, err)
+			defer os.RemoveAll(tmpdir)
+
+			updateModulesSetup(t, &c, tmpdir)
+
 			cmd := exec.Command(os.Args[0], os.Args[1:]...)
 			cmd.Env = append(cmd.Env, "TestStateTransitionsWithUpdateModules=subProcess")
 			cmd.Env = append(cmd.Env, fmt.Sprintf("caseName=%s", c.caseName))
+			cmd.Env = append(cmd.Env, fmt.Sprintf("tmpdir=%s", tmpdir))
 			cmd.Stderr = cmd.Stdout
 			output, err := cmd.Output()
 			t.Log(string(output))
@@ -1174,19 +1191,26 @@ func TestStateTransitionsWithUpdateModules(t *testing.T) {
 	}
 }
 
-func makeTestUpdateModule(t *testing.T, path string) {
+func makeTestUpdateModule(t *testing.T, path string,
+	spontRebootStates []string) {
+
 	fd, err := os.OpenFile(path, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0755)
 	require.NoError(t, err)
 	defer fd.Close()
 
-	fd.Write([]byte(`#!/bin/bash
-exit 0
-`))
+	fd.Write([]byte("#!/bin/bash\n"))
+
+	for _, state := range spontRebootStates {
+		s := fmt.Sprintf("if [ \"$1\" = \"%s\" ]; then kill -9 $PPID; fi\n", state)
+		fd.Write([]byte(s))
+	}
+
+	fd.Write([]byte("exit 0\n"))
 }
 
 func updateModulesSetup(t *testing.T,
 	c *stateTransitionsWithUpdateModulesTestCase,
-	tmpdir string) (*StateContext, Controller) {
+	tmpdir string) {
 
 	require.NoError(t, os.MkdirAll(path.Join(tmpdir, "var/lib/mender"), 0755))
 	require.NoError(t, os.MkdirAll(path.Join(tmpdir, "etc/mender"), 0755))
@@ -1198,6 +1222,21 @@ func updateModulesSetup(t *testing.T,
 	DeploymentLogger = NewDeploymentLogManager(path.Join(tmpdir, "logs"))
 
 	require.NoError(t, os.Mkdir(path.Join(tmpdir, "db"), 0755))
+
+	modulesPath := path.Join(tmpdir, "modules")
+	require.NoError(t, os.MkdirAll(modulesPath, 0755))
+	makeTestUpdateModule(t, path.Join(modulesPath, "test-type"), c.spontRebootStates)
+
+	deviceTypeFile := path.Join(tmpdir, "device_type")
+	deviceTypeFd, err := os.OpenFile(deviceTypeFile, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0644)
+	require.NoError(t, err)
+	defer deviceTypeFd.Close()
+	deviceTypeFd.Write([]byte("device_type=test-device\n"))
+}
+
+func subProcessSetup(t *testing.T,
+	tmpdir string) (*StateContext, Controller) {
+
 	store := store.NewDBStore(path.Join(tmpdir, "db"))
 
 	ctx := StateContext{
@@ -1219,24 +1258,16 @@ func updateModulesSetup(t *testing.T,
 		ModulesWorkPath: path.Join(tmpdir, "work"),
 	}
 
-	require.NoError(t, os.MkdirAll(config.ModulesPath, 0755))
-	makeTestUpdateModule(t, path.Join(config.ModulesPath, "test-type"))
-
 	mender, err := NewMender(config, menderPieces)
 	require.NoError(t, err)
 	controller := menderWithCustomUpdater{
 		mender: *mender,
 	}
 
-	deviceTypeFile := path.Join(tmpdir, "device_type")
-	deviceTypeFd, err := os.OpenFile(deviceTypeFile, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0644)
-	require.NoError(t, err)
-	defer deviceTypeFd.Close()
-	deviceTypeFd.Write([]byte("device_type=test-device\n"))
-
-	controller.deviceTypeFile = deviceTypeFile
+	controller.deviceTypeFile = path.Join(tmpdir, "device_type")
 	controller.stateScriptPath = path.Join(tmpdir, "scripts")
 
+	artPath := path.Join(tmpdir, "artifact.mender")
 	updateStream, err := os.Open(artPath)
 	controller.updater.fetchUpdateReturnReadCloser = updateStream
 
@@ -1246,14 +1277,14 @@ func updateModulesSetup(t *testing.T,
 	return &ctx, &controller
 }
 
+
 // This entire function is executed in a sub process, so we can freely mess with
 // the client state without cleaning up, and even kill it.
-func subTestStateTransitionsWithUpdateModules(t *testing.T, c *stateTransitionsWithUpdateModulesTestCase) {
-	tmpdir, err := ioutil.TempDir("", "TestStateTransitionsWithUpdateModules")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpdir)
+func subTestStateTransitionsWithUpdateModules(t *testing.T,
+	c *stateTransitionsWithUpdateModulesTestCase,
+	tmpdir string) {
 
-	ctx, controller := updateModulesSetup(t, c, tmpdir)
+	ctx, controller := subProcessSetup(t, tmpdir)
 
 	// Shortcut into update fetch state.
 	update := datastore.UpdateInfo{}

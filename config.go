@@ -104,7 +104,8 @@ func loadConfig(mainConfigFile string, fallbackConfigFile string) (*menderConfig
 	}
 
 	if filesLoadedCount == 0 {
-		return nil, errors.New("could not find either configuration file")
+		log.Info("No configuration files present. Using defaults")
+		return config, nil
 	}
 
 	if config.Servers == nil {
@@ -142,7 +143,7 @@ func loadConfigFile(configFile string, config *menderConfig, filesLoadedCount *i
 	// Do not treat a single config file not existing as an error here.
 	// It is up to the caller to fail when both config files don't exist.
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		log.Info("Configuration file does not exist: ", configFile)
+		log.Debug("Configuration file does not exist: ", configFile)
 		return nil
 	}
 

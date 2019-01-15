@@ -41,10 +41,6 @@ func doStandaloneInstall(dualRootfsDevice handlers.UpdateStorerProducer, args ru
 		return errors.New("rootfs called without needed parameters")
 	}
 
-	if dualRootfsDevice == nil {
-		return errors.New("No dual rootfs configuration present")
-	}
-
 	log.Debug("Starting device update.")
 
 	updateLocation := *args.imageFile

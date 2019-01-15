@@ -108,39 +108,49 @@ func (mod *ModuleInstaller) callModule(state string, capture bool) (string, erro
 }
 
 func (mod *ModuleInstaller) StoreUpdate(r io.Reader, info os.FileInfo) error {
+	log.Debug("Executing ModuleInstaller.StoreUpdate")
+	io.Copy(ioutil.Discard, r)
 	return nil
 }
 
 func (mod *ModuleInstaller) InstallUpdate() error {
+	log.Debug("Executing ModuleInstaller.InstallUpdate")
 	_, err := mod.callModule("ArtifactInstall", false)
 	return err
 }
 
 func (mod *ModuleInstaller) Reboot() error {
+	log.Debug("Executing ModuleInstaller.Reboot")
 	return nil
 }
 
 func (mod *ModuleInstaller) CommitUpdate() error {
+	log.Debug("Executing ModuleInstaller.CommitUpdate")
 	return nil
 }
 
 func (mod *ModuleInstaller) Rollback() error {
+	log.Debug("Executing ModuleInstaller.Rollback")
 	return nil
 }
 
 func (mod *ModuleInstaller) VerifyReboot() error {
+	log.Debug("Executing ModuleInstaller.VerifyReboot")
 	return nil
 }
 
 func (mod *ModuleInstaller) VerifyRollbackReboot() error {
+	log.Debug("Executing ModuleInstaller.VerifyRollbackReboot")
 	return nil
 }
 
 func (mod *ModuleInstaller) Failure() error {
+	log.Debug("Executing ModuleInstaller.Failure")
 	return nil
 }
 
 func (mod *ModuleInstaller) Cleanup() error {
+	log.Debug("Executing ModuleInstaller.Cleanup")
 	return nil
 }
 

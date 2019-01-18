@@ -42,18 +42,25 @@ type BootEnvReadWriter interface {
 type Controller interface {
 	IsAuthorized() bool
 	Authorize() menderError
+
 	GetCurrentArtifactName() (string, error)
 	GetUpdatePollInterval() time.Duration
 	GetInventoryPollInterval() time.Duration
 	GetRetryPollInterval() time.Duration
+
 	CheckUpdate() (*datastore.UpdateInfo, menderError)
 	FetchUpdate(url string) (io.ReadCloser, int64, error)
+
+	NewStatusReportWrapper(updateId string,
+		stateId datastore.MenderState) *client.StatusReportWrapper
 	ReportUpdateStatus(update *datastore.UpdateInfo, status string) menderError
 	UploadLog(update *datastore.UpdateInfo, logs []byte) menderError
 	InventoryRefresh() error
-	CheckScriptsCompatibility() error
-	InstallArtifact(from io.ReadCloser) error
 
+	CheckScriptsCompatibility() error
+	GetScriptExecutor() statescript.Executor
+
+	InstallArtifact(from io.ReadCloser) error
 	GetInstallers() []installer.PayloadInstaller
 
 	StateRunner
@@ -138,7 +145,6 @@ func NewMender(config menderConfig, pieces MenderPieces) (*mender, error) {
 
 	m := &mender{
 		dualRootfsDevice:    pieces.dualRootfsDevice,
-		modulesFactory:      installer.NewModuleInstallerFactory(config.ModulesPath, config.ModulesWorkPath),
 		updater:             client.NewUpdate(),
 		artifactInfoFile:    defaultArtifactInfoFile,
 		deviceTypeFile:      defaultDeviceTypeFile,
@@ -151,6 +157,8 @@ func NewMender(config menderConfig, pieces MenderPieces) (*mender, error) {
 		stateScriptExecutor: stateScrExec,
 		stateScriptPath:     defaultArtScriptsPath,
 	}
+	m.modulesFactory = installer.NewModuleInstallerFactory(config.ModulesPath,
+		config.ModulesWorkPath, m, m)
 
 	if m.authMgr != nil {
 		if err := m.loadAuth(); err != nil {
@@ -203,6 +211,10 @@ func getManifestData(dataType, manifestFile string) (string, error) {
 
 func (m *mender) GetCurrentArtifactName() (string, error) {
 	return getManifestData("artifact_name", m.artifactInfoFile)
+}
+
+func (m *mender) GetCurrentArtifactGroup() (string, error) {
+	return getManifestData("artifact_group", m.artifactInfoFile)
 }
 
 func (m *mender) GetDeviceType() (string, error) {
@@ -406,6 +418,19 @@ func (m *mender) CheckUpdate() (*datastore.UpdateInfo, menderError) {
 	return &update, nil
 }
 
+func (m *mender) NewStatusReportWrapper(updateId string,
+	stateId datastore.MenderState) *client.StatusReportWrapper {
+
+	return &client.StatusReportWrapper{
+		API: m.api.Request(m.authToken, nextServerIterator(m), reauthorize(m)),
+		URL: m.config.Servers[0].ServerURL,
+		Report: client.StatusReport{
+			DeploymentID: updateId,
+			Status:       StateStatus(stateId),
+		},
+	}
+}
+
 func (m *mender) ReportUpdateStatus(update *datastore.UpdateInfo, status string) menderError {
 	s := client.NewStatus()
 	err := s.Report(m.api.Request(m.authToken, nextServerIterator(m), reauthorize(m)), m.config.Servers[0].ServerURL,
@@ -519,7 +544,7 @@ func (m *mender) UploadLog(update *datastore.UpdateInfo, logs []byte) menderErro
 	return nil
 }
 
-func (m mender) GetUpdatePollInterval() time.Duration {
+func (m *mender) GetUpdatePollInterval() time.Duration {
 	t := time.Duration(m.config.UpdatePollIntervalSeconds) * time.Second
 	if t == 0 {
 		log.Warn("UpdatePollIntervalSeconds is not defined")
@@ -528,7 +553,7 @@ func (m mender) GetUpdatePollInterval() time.Duration {
 	return t
 }
 
-func (m mender) GetInventoryPollInterval() time.Duration {
+func (m *mender) GetInventoryPollInterval() time.Duration {
 	t := time.Duration(m.config.InventoryPollIntervalSeconds) * time.Second
 	if t == 0 {
 		log.Warn("InventoryPollIntervalSeconds is not defined")
@@ -537,7 +562,7 @@ func (m mender) GetInventoryPollInterval() time.Duration {
 	return t
 }
 
-func (m mender) GetRetryPollInterval() time.Duration {
+func (m *mender) GetRetryPollInterval() time.Duration {
 	t := time.Duration(m.config.RetryPollIntervalSeconds) * time.Second
 	if t == 0 {
 		log.Warn("RetryPollIntervalSeconds is not defined")
@@ -552,6 +577,10 @@ func (m *mender) SetNextState(s State) {
 
 func (m *mender) GetCurrentState() State {
 	return m.state
+}
+
+func (m *mender) GetScriptExecutor() statescript.Executor {
+	return m.stateScriptExecutor
 }
 
 func shouldTransit(from, to State) bool {
@@ -609,7 +638,13 @@ func getUpdateFromState(state State) (*datastore.UpdateInfo, error) {
 }
 
 func (m *mender) TransitionState(to State, ctx *StateContext) (State, bool) {
-	from := m.GetCurrentState()
+	// In its own function so that we can test it with an alternative
+	// Controller.
+	return transitionState(to, ctx, m)
+}
+
+func transitionState(to State, ctx *StateContext, c Controller) (State, bool) {
+	from := c.GetCurrentState()
 
 	log.Infof("State transition: %s [%s] -> %s [%s]",
 		from.Id(), from.Transition().String(),
@@ -625,14 +660,7 @@ func (m *mender) TransitionState(to State, ctx *StateContext) (State, bool) {
 		if err != nil {
 			log.Error(err)
 		} else {
-			report = &client.StatusReportWrapper{
-				API: m.api.Request(m.authToken, nextServerIterator(m), reauthorize(m)),
-				URL: m.config.Servers[0].ServerURL,
-				Report: client.StatusReport{
-					DeploymentID: upd.ID,
-					Status:       StateStatus(to.Id()),
-				},
-			}
+			report = c.NewStatusReportWrapper(upd.ID, to.Id())
 		}
 	}
 
@@ -647,28 +675,28 @@ func (m *mender) TransitionState(to State, ctx *StateContext) (State, bool) {
 				report.Report.Status = StateStatus(from.Id())
 			}
 			// call error scripts
-			from.Transition().Error(m.stateScriptExecutor, report)
+			from.Transition().Error(c.GetScriptExecutor(), report)
 		} else {
 			// do transition to ordinary state
-			if err := from.Transition().Leave(m.stateScriptExecutor, report, ctx.store); err != nil {
+			if err := from.Transition().Leave(c.GetScriptExecutor(), report, ctx.store); err != nil {
 				log.Errorf("error executing leave script for %s state: %v", from.Id(), err)
 				return TransitionError(from, "Leave"), false
 			}
 		}
 
-		m.SetNextState(to)
+		c.SetNextState(to)
 
-		if err := to.Transition().Enter(m.stateScriptExecutor, report, ctx.store); err != nil {
+		if err := to.Transition().Enter(c.GetScriptExecutor(), report, ctx.store); err != nil {
 			log.Errorf("error calling enter script for (error) %s state: %v", to.Id(), err)
 			// we have not entered to state; so handle from state error
 			return TransitionError(from, "Enter"), false
 		}
 	}
 
-	m.SetNextState(to)
+	c.SetNextState(to)
 
 	// execute current state action
-	return to.Handle(ctx, m)
+	return to.Handle(ctx, c)
 }
 
 func (m *mender) InventoryRefresh() error {

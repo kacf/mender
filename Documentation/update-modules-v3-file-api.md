@@ -105,13 +105,15 @@ The module should print one of the valid responses:
 
 * `No` - Mender will not run `ArtifactReboot`. This is the same as returning
   nothing, **and hence the default**.
-* `Yes` - Mender will run the update module with the `ArtifactReboot` argument
-* `Automatic` - Mender will not call the module with the `ArtifactReboot`
-  argument, but will instead perform one single reboot itself. The intended use
-  of this response is to group the reboots of several update modules into one
-  reboot. **This is usually the best choice** for all modules that just require
-  a normal reboot, but modules that reboot a peripheral device may need to use
-  `Yes` instead, and implement their own method.
+* `Yes` **[Unimplemented]**- Mender will run the update module with the
+  `ArtifactReboot` argument
+* `Automatic` **[Unimplemented]** - Mender will not call the module with the
+  `ArtifactReboot` argument, but will instead perform one single reboot
+  itself. The intended use of this response is to group the reboots of several
+  update modules into one reboot. **This is usually the best choice** for all
+  modules that just require a normal reboot, but modules that reboot a
+  peripheral device may need to use `Yes` instead, and implement their own
+  method.
 
 **Note:** Even though the update module won't be called with the
 `ArtifactReboot` argument when using `Automatic`, it still counts as having
@@ -181,8 +183,9 @@ where the module can respond with the following responses:
 
 * `No` - Signals that the update module does not support rollback. This is the
   same as responding with nothing, and hence the default
-* `Yes` - Signals that the update module supports rollback and it should be
-  handled by calling `ArtifactRollback` and `ArtifackRollbackReboot` states
+* `Yes` **[Unimplemented]** - Signals that the update module supports rollback
+  and it should be handled by calling `ArtifactRollback` and
+  `ArtifackRollbackReboot` states
 * `AutomaticDualRootfs` **[Unimplemented]** - Will use the built-in dual rootfs
   capability of Mender to provide a backup of the currently running system,
   hence providing a system that can be rolled back to. The module will not be
@@ -310,10 +313,6 @@ of information from the client, and must be used by update modules.
   |
   +---version
   |
-  +---artifact_group
-  |
-  +---artifact_name
-  |
   +---current_artifact_group
   |
   +---current_artifact_name
@@ -321,6 +320,12 @@ of information from the client, and must be used by update modules.
   +---current_device_type
   |
   +---header
+  |    |
+  |    +---artifact_group
+  |    |
+  |    +---artifact_name
+  |    |
+  |    +---payload_type
   |    |
   |    +---header-info
   |    |
@@ -365,13 +370,6 @@ which is always the same as the version of the update module. This is reflected
 by the location of the update module, which is always inside `v3` folder (for
 version 3).
 
-### `artifact_group` and `artifact_name`
-
-`artifact_group` and `artifact_name` contain the group and name of the Artifact
-that is being installed, respectively. This is the same information as that
-which is available inside `header/header-info`, under the `artifact_provides ->
-`artifact_group` and `artifact_name` keys, and is merely for convenience.
-
 ### `current_artifact_group`, `current_artifact_name` and `current_device_type`
 
 `current_artifact_group`, `current_artifact_name` and `current_device_type`
@@ -382,9 +380,28 @@ values, unlike the original files that contain key/value pairs.
 ### `header`
 
 The `header` directory contains the verbatim headers from the `header.tar.gz`
-header file of the Artifact. One Artifact can contain payloads for several
-update module, so the three files `files`, `type-info` and `meta-data` are taken
-from the indexed subfolder currently being processed by Mender.
+header file of the Artifact, in addition to a few extra files. One Artifact can
+contain payloads for several update module, so the three files `files`,
+`type-info` and `meta-data` are taken from the indexed subfolder currently being
+processed by Mender.
+
+#### `artifact_group` and `artifact_name`
+
+`artifact_group` and `artifact_name` contain the group and name of the Artifact
+that is being installed, respectively. This is the same information as that
+which is available inside `header/header-info`, under the `artifact_provides ->
+`artifact_group` and `artifact_name` keys, and is merely for convenience.
+
+#### `payload_type`
+
+`payload_type` contains the type of the payload which is current being installed
+using this file tree. It is always one of the elements from the `payloads` list
+in the `header-info` file, under the `type` key. The rest of the list
+corresponds to payloads that are being installed using different trees, and
+possibly with different update modules.
+
+`payload_type` will always be the nth from the `payloads` list, which n is the
+index number which can be found in the path to the file tree.
 
 ### `tmp`
 

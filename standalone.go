@@ -82,7 +82,8 @@ func doStandaloneInstall(dualRootfsDevice handlers.UpdateStorerProducer, args ru
 
 	installerFactories := installer.UpdateStorerProducers{
 		DualRootfs: dualRootfsDevice,
-		Modules:    installer.NewModuleInstallerFactory(config.ModulesPath, config.ModulesWorkPath),
+		// Modules:    installer.NewModuleInstallerFactory(config.ModulesPath,
+		// 	config.ModulesWorkPath, config),
 	}
 
 	return doStandaloneInstallStates(ioutil.NopCloser(tr), dt, vKey, &installerFactories, stateExec)

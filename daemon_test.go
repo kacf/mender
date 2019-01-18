@@ -25,6 +25,7 @@ import (
 	"github.com/mendersoftware/mender/client"
 	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/store"
+	"github.com/mendersoftware/mender-artifact/artifact"
 	"github.com/mendersoftware/mender-artifact/handlers"
 	"github.com/stretchr/testify/assert"
 )
@@ -39,12 +40,31 @@ type fakeDevice struct {
 	consumeUpdate     bool
 }
 
+func (f fakeDevice) NeedsReboot() (bool, error) {
+	return true, nil
+}
+
+func (f fakeDevice) SupportsRollback() (bool, error) {
+	return true, nil
+}
+
 func (f fakeDevice) Reboot() error {
+	return f.retReboot
+}
+
+func (f fakeDevice) RollbackReboot() error {
 	return f.retReboot
 }
 
 func (f fakeDevice) Rollback() error {
 	return f.retRollback
+}
+
+func (f fakeDevice) PrepareStoreUpdate(artifactHeaders,
+	artifactAugmentedHeaders artifact.HeaderInfoer,
+	payloadHeaders handlers.ArtifactUpdateHeaders) error {
+
+	return nil
 }
 
 func (f fakeDevice) StoreUpdate(from io.Reader, info os.FileInfo) error {
@@ -53,6 +73,10 @@ func (f fakeDevice) StoreUpdate(from io.Reader, info os.FileInfo) error {
 		return err
 	}
 	return f.retStoreUpdate
+}
+
+func (f fakeDevice) FinishStoreUpdate() error {
+	return nil
 }
 
 func (f fakeDevice) InstallUpdate() error {

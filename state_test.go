@@ -22,6 +22,9 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -29,6 +32,7 @@ import (
 	"github.com/mendersoftware/mender/client"
 	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/installer"
+	"github.com/mendersoftware/mender/statescript"
 	"github.com/mendersoftware/mender/store"
 	"github.com/mendersoftware/mender-artifact/artifact"
 	"github.com/mendersoftware/mender-artifact/awriter"
@@ -141,6 +145,16 @@ func (s *stateTestController) InstallArtifact(from io.ReadCloser) error {
 
 func (s *stateTestController) GetInstallers() []installer.PayloadInstaller {
 	return []installer.PayloadInstaller{s.fakeDevice}
+}
+
+func (s *stateTestController) NewStatusReportWrapper(updateId string,
+	stateId datastore.MenderState) *client.StatusReportWrapper {
+
+	return nil
+}
+
+func (s *stateTestController) GetScriptExecutor() statescript.Executor {
+	return nil
 }
 
 type waitStateTest struct {
@@ -1113,6 +1127,14 @@ type menderWithCustomUpdater struct {
 	updater fakeUpdater
 }
 
+func (m *menderWithCustomUpdater) CheckUpdate() (*datastore.UpdateInfo, menderError) {
+	update := datastore.UpdateInfo{}
+	update.Artifact.CompatibleDevices = []string{"test-device"}
+	update.Artifact.ArtifactName = "test-name"
+	update.ID = "abcdefg"
+	return &update, nil
+}
+
 func (m *menderWithCustomUpdater) ReportUpdateStatus(update *datastore.UpdateInfo, status string) menderError {
 	return nil
 }
@@ -1121,38 +1143,87 @@ func (m *menderWithCustomUpdater) FetchUpdate(url string) (io.ReadCloser, int64,
 	return m.updater.FetchUpdate(nil, url)
 }
 
+func (m *menderWithCustomUpdater) UploadLog(update *datastore.UpdateInfo, logs []byte) menderError {
+	return nil
+}
+
 type stateTransitionsWithUpdateModulesTestCase struct {
-	caseName          string
-	stateChain        []State
-	spontRebootStates []string
+	caseName           string
+	stateChain         []State
+	artifactStateChain []string
+	errorStates        []string
+	spontRebootStates  []string
+	rollbackDisabled   bool
 }
 
 var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModulesTestCase = []stateTransitionsWithUpdateModulesTestCase{
+
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Entering store state",
+		caseName: "Normal install, no reboot, no rollback",
 		stateChain: []State{
+			&UpdateFetchState{},
 			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateCommitState{},
 		},
+		artifactStateChain: []string{
+			"SupportsRollback",
+			"Download",
+			"ArtifactInstall",
+			"ArtifactCommit",
+			"Cleanup",
+		},
+		rollbackDisabled: true,
 	},
+
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Test kill",
+		caseName: "Error in install state, no rollback",
 		stateChain: []State{
+			&UpdateFetchState{},
 			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateErrorState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"SupportsRollback",
+			"Download",
+			"ArtifactInstall",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		errorStates: []string{"ArtifactInstall"},
+		rollbackDisabled: true,
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Killed in install state, no rollback",
+		stateChain: []State{
+			&UpdateFetchState{},
 			&UpdateStoreState{},
-			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateErrorState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"SupportsRollback",
+			"Download",
+			"ArtifactInstall",
+			"NeedsReboot",
+			"ArtifactFailure",
+			"Cleanup",
 		},
 		spontRebootStates: []string{"ArtifactInstall"},
-	},
-	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Test loop",
-		stateChain: []State{
-			&UpdateStoreState{},
-			&UpdateStoreState{},
-			&UpdateStoreState{},
-		},
+		rollbackDisabled: true,
 	},
 }
 
+// This test runs all state transitions for an update in a sub process,
+// including state transitions that involve killing the process (which would
+// happen in a spontaneous reboot situation), and tests that the transitions
+// work all the way through.
 func TestStateTransitionsWithUpdateModules(t *testing.T) {
 	env, ok := os.LookupEnv("TestStateTransitionsWithUpdateModules")
 	if ok && env == "subProcess" {
@@ -1177,33 +1248,125 @@ func TestStateTransitionsWithUpdateModules(t *testing.T) {
 
 			updateModulesSetup(t, &c, tmpdir)
 
-			cmd := exec.Command(os.Args[0], os.Args[1:]...)
-			cmd.Env = append(cmd.Env, "TestStateTransitionsWithUpdateModules=subProcess")
-			cmd.Env = append(cmd.Env, fmt.Sprintf("caseName=%s", c.caseName))
-			cmd.Env = append(cmd.Env, fmt.Sprintf("tmpdir=%s", tmpdir))
-			cmd.Stderr = cmd.Stdout
-			output, err := cmd.Output()
-			t.Log(string(output))
-			if err != nil {
-				t.Error(err.Error())
+			env := []string{}
+			env = append(env, "TestStateTransitionsWithUpdateModules=subProcess")
+			env = append(env, fmt.Sprintf("caseName=%s", c.caseName))
+			env = append(env, fmt.Sprintf("tmpdir=%s", tmpdir))
+
+			killCount := 0
+			for {
+				cmd := exec.Command(os.Args[0], os.Args[1:]...)
+				cmd.Env = env
+				output, err := cmd.CombinedOutput()
+				t.Log(string(output))
+				if err == nil {
+					break
+				}
+
+				waitStatus := cmd.ProcessState.Sys().(syscall.WaitStatus)
+				if waitStatus.Signal() == syscall.SIGKILL &&
+					killCount < len(c.spontRebootStates) {
+
+					t.Log("Killed as expected")
+					killCount++
+					continue
+				}
+
+				t.Fatal(err.Error())
 			}
+
+			log, err := os.Open(path.Join(tmpdir, "module.log"))
+			require.NoError(t, err)
+			logContent := make([]byte, 1000)
+			n, err := log.Read(logContent)
+			require.NoError(t, err)
+			assert.True(t, n > 0)
+			logList := strings.Split(string(bytes.TrimRight(logContent[:n], "\n")), "\n")
+			assert.Equal(t, c.artifactStateChain, logList)
 		})
 	}
 }
 
-func makeTestUpdateModule(t *testing.T, path string,
-	spontRebootStates []string) {
+
+// This entire function is executed in a sub process, so we can freely mess with
+// the client state without cleaning up, and even kill it.
+func subTestStateTransitionsWithUpdateModules(t *testing.T,
+	c *stateTransitionsWithUpdateModulesTestCase,
+	tmpdir string) {
+
+	ctx, mender := subProcessSetup(t, tmpdir)
+
+	var state State
+	var stateIndex int
+
+	// Since we may be killed and restarted, read where we were in the state
+	// indexes.
+	indexText, err := ctx.store.ReadAll("test_stateIndex")
+	if err != nil {
+		// Shortcut into update check state: a new update.
+		ucs := *updateCheckState
+		state = &ucs
+	} else {
+		// Start in init state, which should resume the correct state
+		// after a kill/reboot.
+		init := *initState
+		state = &init
+		stateIndex64, err := strconv.ParseInt(string(indexText), 0, 0)
+		require.NoError(t, err)
+		stateIndex = int(stateIndex64)
+		t.Logf("Resuming from state index %d (%T)",
+			stateIndex, c.stateChain[stateIndex])
+	}
+
+	// IMPORTANT: Do not use "assert.Whatever()", but only
+	// "require.Whatever()" in this function. The reason is that we may get
+	// killed, and then the status from asserts is lost.
+	for _, expectedState := range c.stateChain[stateIndex:] {
+		// Store next state index we will enter
+		indexText = []byte(fmt.Sprintf("%d", stateIndex))
+		require.NoError(t, ctx.store.WriteAll("test_stateIndex", indexText))
+
+		// Now do state transition, which may kill us (part of testing
+		// spontaneous reboot)
+		var cancelled bool
+		state, cancelled = transitionState(state, ctx, mender)
+		require.False(t, cancelled)
+		require.IsTypef(t, expectedState, state, "state index %d", stateIndex)
+
+		stateIndex++
+	}
+}
+
+func makeTestUpdateModule(t *testing.T, path, logPath string,
+	c *stateTransitionsWithUpdateModulesTestCase) {
 
 	fd, err := os.OpenFile(path, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0755)
 	require.NoError(t, err)
 	defer fd.Close()
 
-	fd.Write([]byte("#!/bin/bash\n"))
+	fd.Write([]byte(fmt.Sprintf(`#!/bin/bash
+echo "$1" >> %s
+`, logPath)))
 
-	for _, state := range spontRebootStates {
+	// Kill parent (mender) in specified state
+	for _, state := range c.spontRebootStates {
 		s := fmt.Sprintf("if [ \"$1\" = \"%s\" ]; then kill -9 $PPID; fi\n", state)
 		fd.Write([]byte(s))
 	}
+
+	// Produce error in specified state
+	for _, state := range c.errorStates {
+		s := fmt.Sprintf("if [ \"$1\" = \"%s\" ]; then exit 1; fi\n", state)
+		fd.Write([]byte(s))
+	}
+
+	fd.Write([]byte("if [ \"$1\" = \"SupportsRollback\" ]; then\n"))
+	if c.rollbackDisabled {
+		fd.Write([]byte("echo No\n"))
+	} else {
+		fd.Write([]byte("echo Yes\n"))
+	}
+	fd.Write([]byte("fi\n"))
 
 	fd.Write([]byte("exit 0\n"))
 }
@@ -1219,13 +1382,13 @@ func updateModulesSetup(t *testing.T,
 	require.NoError(t, makeImageForUpdateModules(artPath))
 
 	require.NoError(t, os.Mkdir(path.Join(tmpdir, "logs"), 0755))
-	DeploymentLogger = NewDeploymentLogManager(path.Join(tmpdir, "logs"))
 
 	require.NoError(t, os.Mkdir(path.Join(tmpdir, "db"), 0755))
 
 	modulesPath := path.Join(tmpdir, "modules")
+	logPath := path.Join(tmpdir, "module.log")
 	require.NoError(t, os.MkdirAll(modulesPath, 0755))
-	makeTestUpdateModule(t, path.Join(modulesPath, "test-type"), c.spontRebootStates)
+	makeTestUpdateModule(t, path.Join(modulesPath, "test-type"), logPath, c)
 
 	deviceTypeFile := path.Join(tmpdir, "device_type")
 	deviceTypeFd, err := os.OpenFile(deviceTypeFile, os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0644)
@@ -1235,7 +1398,7 @@ func updateModulesSetup(t *testing.T,
 }
 
 func subProcessSetup(t *testing.T,
-	tmpdir string) (*StateContext, Controller) {
+	tmpdir string) (*StateContext, *menderWithCustomUpdater) {
 
 	store := store.NewDBStore(path.Join(tmpdir, "db"))
 
@@ -1258,6 +1421,8 @@ func subProcessSetup(t *testing.T,
 		ModulesWorkPath: path.Join(tmpdir, "work"),
 	}
 
+	DeploymentLogger = NewDeploymentLogManager(path.Join(tmpdir, "logs"))
+
 	mender, err := NewMender(config, menderPieces)
 	require.NoError(t, err)
 	controller := menderWithCustomUpdater{
@@ -1275,30 +1440,6 @@ func subProcessSetup(t *testing.T,
 	client.ExponentialBackoffSmallestUnit = time.Millisecond
 
 	return &ctx, &controller
-}
-
-
-// This entire function is executed in a sub process, so we can freely mess with
-// the client state without cleaning up, and even kill it.
-func subTestStateTransitionsWithUpdateModules(t *testing.T,
-	c *stateTransitionsWithUpdateModulesTestCase,
-	tmpdir string) {
-
-	ctx, controller := subProcessSetup(t, tmpdir)
-
-	// Shortcut into update fetch state.
-	update := datastore.UpdateInfo{}
-	update.Artifact.CompatibleDevices = []string{"test-device"}
-	update.Artifact.ArtifactName = "test-name"
-	update.ID = "abcdefg"
-	state := NewUpdateFetchState(&update)
-
-	for _, expectedState := range c.stateChain {
-		var cancelled bool
-		state, cancelled = state.Handle(ctx, controller)
-		assert.False(t, cancelled)
-		assert.IsType(t, expectedState, state)
-	}
 }
 
 func makeImageForUpdateModules(path string) error {

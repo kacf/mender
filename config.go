@@ -70,14 +70,16 @@ type menderConfig struct {
 
 	// Additional fields that are in our config struct for convenience, but
 	// not actually configurable via the config file.
-	ModulesPath     string
-	ModulesWorkPath string
+	ModulesPath      string
+	ModulesWorkPath  string
+	ArtifactInfoFile string
 }
 
 func NewMenderConfig() *menderConfig {
 	return &menderConfig{
-		ModulesPath: defaultModulesPath,
-		ModulesWorkPath: defaultModulesWorkPath,
+		ModulesPath:      defaultModulesPath,
+		ModulesWorkPath:  defaultModulesWorkPath,
+		ArtifactInfoFile: defaultArtifactInfoFile,
 	}
 }
 
@@ -177,7 +179,7 @@ func readConfigFile(config interface{}, fileName string) error {
 	return nil
 }
 
-func (c menderConfig) GetHttpConfig() client.Config {
+func (c *menderConfig) GetHttpConfig() client.Config {
 	return client.Config{
 		ServerCert: c.ServerCertificate,
 		IsHttps:    c.ClientProtocol == "https",
@@ -185,24 +187,24 @@ func (c menderConfig) GetHttpConfig() client.Config {
 	}
 }
 
-func (c menderConfig) GetDeviceConfig() dualRootfsDeviceConfig {
+func (c *menderConfig) GetDeviceConfig() dualRootfsDeviceConfig {
 	return dualRootfsDeviceConfig{
 		rootfsPartA: c.RootfsPartA,
 		rootfsPartB: c.RootfsPartB,
 	}
 }
 
-func (c menderConfig) GetDeploymentLogLocation() string {
+func (c *menderConfig) GetDeploymentLogLocation() string {
 	return c.UpdateLogPath
 }
 
 // GetTenantToken returns a default tenant-token if
 // no custom token is set in local.conf
-func (c menderConfig) GetTenantToken() []byte {
+func (c *menderConfig) GetTenantToken() []byte {
 	return []byte(c.TenantToken)
 }
 
-func (c menderConfig) GetVerificationKey() []byte {
+func (c *menderConfig) GetVerificationKey() []byte {
 	if c.ArtifactVerifyKey == "" {
 		return nil
 	}

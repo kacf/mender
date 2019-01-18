@@ -16,6 +16,8 @@ package datastore
 import (
 	"fmt"
 	"encoding/json"
+
+	"github.com/pkg/errors"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -150,6 +152,22 @@ func (m *MenderState) UnmarshalJSON(data []byte) error {
 	return fmt.Errorf("unmarshal error; unknown state %s", s)
 }
 
+type SupportsRollbackType int
+const (
+	RollbackSupportUnknown = iota
+	RollbackNotSupported
+	RollbackSupported
+)
+
+func (s *SupportsRollbackType) Set(value SupportsRollbackType) error {
+	if *s == RollbackSupportUnknown {
+		*s = value
+	} else if *s != value {
+		return errors.New("Conflicting rollback support. All payloads must agree on rollback support")
+	}
+	return nil
+}
+
 // Info about the update in progress.
 type UpdateInfo struct {
 	Artifact struct {
@@ -161,6 +179,10 @@ type UpdateInfo struct {
 		ArtifactName      string   `json:"artifact_name"`
 	}
 	ID string
+	// Whether the currently running update asked for reboot
+	RebootRequested bool
+	// Whether the currently running update supports rollback.
+	SupportsRollback SupportsRollbackType
 }
 
 func (ur *UpdateInfo) CompatibleDevices() []string {

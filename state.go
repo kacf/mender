@@ -629,6 +629,31 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 		return NewFetchStoreRetryState(u, &u.update, err), false
 	}
 
+	for _, i := range c.GetInstallers() {
+		supportsRollback, err := i.SupportsRollback()
+		if err != nil {
+			return NewUpdateErrorState(NewTransientError(err), &u.update), false
+		}
+		if supportsRollback {
+			err = u.update.SupportsRollback.Set(datastore.RollbackSupported)
+		} else {
+			err = u.update.SupportsRollback.Set(datastore.RollbackNotSupported)
+		}
+		if err != nil {
+			return NewUpdateErrorState(NewTransientError(err), &u.update), false
+		}
+	}
+
+	// Make sure SupportsRollback status is stored
+	err := StoreStateData(ctx.store, datastore.StateData{
+		Name: datastore.MenderStateUpdateStore,
+		UpdateInfo: u.update,
+	})
+	if err != nil {
+		log.Error("Could not write state data to persistent storage: ", err.Error())
+		return NewUpdateErrorState(NewTransientError(err), &u.update), false
+	}
+
 	// restart counter so that we are able to retry next time
 	ctx.fetchInstallAttempts = 0
 
@@ -675,6 +700,29 @@ func (is *UpdateInstallState) Handle(ctx *StateContext, c Controller) (State, bo
 		if err := i.InstallUpdate(); err != nil {
 			return NewUpdateErrorState(NewTransientError(err), is.Update()), false
 		}
+	}
+
+	for _, i := range c.GetInstallers() {
+		needsReboot, err := i.NeedsReboot()
+		if err != nil {
+			return NewUpdateErrorState(NewTransientError(err), is.Update()), false
+		}
+		if needsReboot {
+			is.Update().RebootRequested = true
+		}
+		/* else {
+			// Do not set to false, because the default is false,
+			// and it should be true if *any* payload needs reboot.
+		} */
+	}
+	// Make sure RebootRequested status is stored
+	err := StoreStateData(ctx.store, datastore.StateData{
+		Name: datastore.MenderStateUpdateInstall,
+		UpdateInfo: *is.Update(),
+	})
+	if err != nil {
+		log.Error("Could not write state data to persistent storage: ", err.Error())
+		return NewUpdateErrorState(NewTransientError(err), is.Update()), false
 	}
 
 	return NewRebootState(is.Update()), false
@@ -1184,7 +1232,7 @@ func (rs *RollbackRebootState) Handle(ctx *StateContext, c Controller) (State, b
 	}
 
 	for _, i := range c.GetInstallers() {
-		if err := i.Reboot(); err != nil {
+		if err := i.RollbackReboot(); err != nil {
 			log.Errorf("error rebooting device: %v", err)
 			return NewErrorState(NewFatalError(err)), false
 		}

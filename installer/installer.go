@@ -26,22 +26,25 @@ import (
 	"github.com/pkg/errors"
 )
 
-type UInstaller interface {
-	StoreUpdate(r io.Reader, info os.FileInfo) error
-	InstallUpdate() error
-}
-
 type Rebooter interface {
 	Reboot() error
 }
 
 type PayloadInstaller interface {
-	UInstaller
 	Rebooter
+	PrepareStoreUpdate(artifactHeaders,
+		artifactAugmentedHeaders artifact.HeaderInfoer,
+		payloadHeaders handlers.ArtifactUpdateHeaders) error
+	StoreUpdate(r io.Reader, info os.FileInfo) error
+	FinishStoreUpdate() error
+	InstallUpdate() error
+	NeedsReboot() (bool, error)
 	CommitUpdate() error
+	SupportsRollback() (bool, error)
 	Rollback() error
 	// Verify that rebooting into the new update worked.
 	VerifyReboot() error
+	RollbackReboot() error
 	// Verify that rebooting into the old update worked.
 	VerifyRollbackReboot() error
 	Failure() error
@@ -51,6 +54,15 @@ type PayloadInstaller interface {
 type UpdateStorerProducers struct {
 	DualRootfs handlers.UpdateStorerProducer
 	Modules    *ModuleInstallerFactory
+}
+
+type ArtifactInfoGetter interface {
+	GetCurrentArtifactName() (string, error)
+	GetCurrentArtifactGroup() (string, error)
+}
+
+type DeviceInfoGetter interface {
+	GetDeviceType() (string, error)
 }
 
 func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
@@ -184,6 +196,9 @@ func getInstallerList(ar *areader.Reader) ([]PayloadInstaller, error) {
 	for i, us := range fromReader {
 		installer, ok := us.(PayloadInstaller)
 		if !ok {
+			// If you got this error unexpectedly after working on
+			// some code, check if your installer still implements
+			// PayloadInstaller.
 			return empty, errors.New("Artifact reader returned an unknown installer type")
 		}
 		list[i] = installer

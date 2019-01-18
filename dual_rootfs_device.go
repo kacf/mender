@@ -24,6 +24,7 @@ import (
 
 	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender/installer"
+	"github.com/mendersoftware/mender-artifact/artifact"
 	"github.com/mendersoftware/mender-artifact/handlers"
 	"github.com/pkg/errors"
 )
@@ -75,8 +76,21 @@ func NewDualRootfsDevice(env BootEnvReadWriter, sc StatCommander, config dualRoo
 	return &dualRootfsDevice
 }
 
+func (d *dualRootfsDeviceImpl) NeedsReboot() (bool, error) {
+	return true, nil
+}
+
+func (d *dualRootfsDeviceImpl) SupportsRollback() (bool, error) {
+	return true, nil
+}
+
 func (d *dualRootfsDeviceImpl) Reboot() error {
 	log.Infof("Mender rebooting from active partition: %s", d.active)
+	return d.rebooter.Reboot()
+}
+
+func (d *dualRootfsDeviceImpl) RollbackReboot() error {
+	log.Infof("Mender rebooting from inactive partition: %s", d.active)
 	return d.rebooter.Reboot()
 }
 
@@ -101,6 +115,13 @@ func (d *dualRootfsDeviceImpl) Rollback() error {
 		return err
 	}
 	log.Debug("Marking inactive partition as a boot candidate successful.")
+	return nil
+}
+
+func (d *dualRootfsDeviceImpl) PrepareStoreUpdate(artifactHeaders,
+	artifactAugmentedHeaders artifact.HeaderInfoer,
+	payloadHeaders handlers.ArtifactUpdateHeaders) error {
+
 	return nil
 }
 
@@ -170,6 +191,10 @@ func (d *dualRootfsDeviceImpl) StoreUpdate(image io.Reader, info os.FileInfo) er
 	}
 
 	return err
+}
+
+func (d *dualRootfsDeviceImpl) FinishStoreUpdate() error {
+	return nil
 }
 
 func (d *dualRootfsDeviceImpl) getInactivePartition() (string, string, error) {

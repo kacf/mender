@@ -42,14 +42,41 @@ type ModuleInstaller struct {
 	artifactInfo    ArtifactInfoGetter
 	deviceInfo      DeviceInfoGetter
 
-	storeUpdateCmd *exec.Cmd
+	downloader      *moduleDownload
+	processKiller   *delayKiller
+}
+
+type delayKiller struct {
+	proc       *os.Process
+	killer     *time.Timer
+	hardKiller *time.Timer
+}
+
+// kill9After is time after killAfter as expired, not total time.
+func newDelayKiller(proc *os.Process, killAfter, kill9After time.Duration) *delayKiller {
+	k := &delayKiller{
+		proc: proc,
+	}
+	k.killer = time.AfterFunc(killAfter, func(){
+		k.proc.Kill()
+	})
+	k.hardKiller = time.AfterFunc(killAfter + kill9After, func(){
+		k.proc.Signal(os.Kill)
+	})
+	return k
+}
+
+func (k *delayKiller) Stop() {
+	k.killer.Stop()
+	k.hardKiller.Stop()
 }
 
 func (mod *ModuleInstaller) callModule(state string, capture bool) (string, error) {
 	log.Infof("Calling module: %s %s", mod.programPath, state)
 	cmd := exec.Command(mod.programPath, state)
-	cmd.Stderr = cmd.Stdout
+	cmd.Dir = mod.payloadPath()
 	outputPipe, err := cmd.StdoutPipe()
+	cmd.Stderr = cmd.Stdout
 	if err != nil {
 		return "", err
 	}
@@ -60,24 +87,26 @@ func (mod *ModuleInstaller) callModule(state string, capture bool) (string, erro
 	}
 
 	log.Errorln("TODO, FIX THIS INTERVAL")
-	killer := time.AfterFunc(5 * time.Second, func(){
-		cmd.Process.Kill()
-	})
+	killer := newDelayKiller(cmd.Process, 5 * time.Second, 2 * 5 * time.Second)
 	defer killer.Stop()
-	hardKiller := time.AfterFunc(2 * 5 * time.Second, func(){
-		cmd.Process.Signal(os.Kill)
-	})
-	defer hardKiller.Stop()
 
-	waitChannel := make(chan error)
-	go func() {
-		waitChannel <- cmd.Wait()
-	}()
-	waitTimer := time.NewTimer(3 * 5 * time.Second)
-	defer waitTimer.Stop()
+	output, err := mod.readAndLog(outputPipe, capture)
+	if err != nil {
+		return output, err
+	}
 
+	err = cmd.Wait()
+	if err != nil {
+		log.Errorf("Update module returned error: %s", err.Error())
+	}
+	return output, err
+}
+
+func (mod *ModuleInstaller) readAndLog(r io.ReadCloser, capture bool) (string, error) {
 	var output string
-	lineReader := bufio.NewReader(outputPipe)
+	lineReader := bufio.NewReader(r)
+	defer r.Close()
+
 	for true {
 		line, err := lineReader.ReadString(byte('\n'))
 		if err != nil && err != io.EOF {
@@ -96,19 +125,6 @@ func (mod *ModuleInstaller) callModule(state string, capture bool) (string, erro
 		if err == io.EOF {
 			break
 		}
-	}
-
-	select {
-	case err := <-waitChannel:
-		if err != nil {
-			log.Errorf("Update module terminated abnormally: %s", err.Error())
-			return output, err
-		}
-
-	case <-waitTimer.C:
-		msg := "Unable to kill process"
-		log.Errorln(msg)
-		return output, errors.New(msg)
 	}
 
 	return output, nil
@@ -133,7 +149,7 @@ func (mod *ModuleInstaller) buildStreamsTree(artifactHeaders,
 	if err != nil {
 		return err
 	}
-	for _, dir := range []string{"header", "tmp"} {
+	for _, dir := range []string{"header", "tmp", "streams"} {
 		err = os.MkdirAll(path.Join(workPath, dir), 0700)
 		if err != nil {
 			return err
@@ -157,17 +173,17 @@ func (mod *ModuleInstaller) buildStreamsTree(artifactHeaders,
 
 	provides := artifactHeaders.GetArtifactProvides()
 
-	headerInfoJson, err := json.Marshal(artifactHeaders)
+	headerInfoJson, err := json.MarshalIndent(artifactHeaders, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	typeInfo, err := json.Marshal(payloadHeaders.GetUpdateOriginalTypeInfoWriter())
+	typeInfo, err := json.MarshalIndent(payloadHeaders.GetUpdateOriginalTypeInfoWriter(), "", "  ")
 	if err != nil {
 		return err
 	}
 
-	metaData, err := json.Marshal(payloadHeaders.GetUpdateOriginalMetaData())
+	metaData, err := json.MarshalIndent(payloadHeaders.GetUpdateOriginalMetaData(), "", "  ")
 	if err != nil {
 		return err
 	}
@@ -230,11 +246,240 @@ func (mod *ModuleInstaller) buildStreamsTree(artifactHeaders,
 		}
 	}
 
+	// Create FIFO for next stream, but don't write anything to it yet.
+	err = syscall.Mkfifo(path.Join(workPath, "stream-next"), 0600)
+	if err != nil {
+		return err
+	}
+
 	// Make sure everything is synced to disk in case we need to pick up
 	// from where we left after a spontaneous reboot.
 	syscall.Sync()
 
 	return nil
+}
+
+const (
+	unknownDownloader = 0
+	moduleDownloader = 1
+	menderDownloader = 2
+)
+
+type readerAndNamePair struct {
+	r    io.Reader
+	name string
+}
+
+type moduleDownload struct {
+	payloadPath string
+	proc        *exec.Cmd
+
+	nextStream       chan readerAndNamePair
+	streamNext       *os.File
+	streamNextStatus chan error
+
+	status     chan error
+	finishChan chan bool
+	finishFlag bool
+}
+
+func newModuleDownload(payloadPath string, proc *exec.Cmd) *moduleDownload {
+	return &moduleDownload{
+		payloadPath,
+		proc,
+		make(chan readerAndNamePair),
+		nil,
+		make(chan error),
+		make(chan error),
+		make(chan bool),
+		false,
+	}
+}
+
+// Should be called in a subroutine.
+func (d *moduleDownload) detachedDownloadProcess() {
+	err := d.downloadProcessLoop()
+	log.Error("OUT")
+	d.status <- err
+}
+
+// Loop to receive new stream requests and process them. It gets the download
+// reader via the nextStream channel, and then publishes this in the streamNext
+// stream (which is the "stream-next" FIFO), and gets the status from this
+// publication in streamNextStatus. It then performs the download either by
+// piping to a streams FIFO or a file, depending on whether the update module
+// consumed the entry from "stream-next".
+func (d *moduleDownload) downloadProcessLoop() error {
+	cmdErr := make(chan error)
+	go func() {
+		err := d.proc.Wait()
+		log.Errorf("HERE2, %p, %s", &cmdErr, err.Error())
+		cmdErr <- err
+		log.Errorf("HERE4, %p", &cmdErr)
+	}()
+
+	downloaderType := unknownDownloader
+	var currentStream *readerAndNamePair
+	var err error
+
+	for {
+		log.Errorf("HERE, %p", &cmdErr)
+		select {
+		case err = <-cmdErr:
+		log.Errorf("HERE3, %p", &cmdErr)
+			if err != nil {
+				return err
+			} else if d.finishFlag {
+				return nil
+			} else if downloaderType != unknownDownloader {
+				return errors.New("Module process terminated in the middle of download")
+			}
+
+			// Process terminated without doing any
+			// downloading. This means Mender should download.
+			downloaderType = menderDownloader
+
+			err = d.initializeMenderDownload()
+			if err != nil {
+				return err
+			}
+
+		case stream := <-d.nextStream:
+			if downloaderType != menderDownloader {
+				d.publishNameInStreamNext(stream.name)
+			}
+			currentStream = &stream
+
+		case err = <-d.streamNextStatus:
+			if err != nil {
+				if downloaderType != menderDownloader {
+					return err
+				}
+				// We don't care what happens to the pipe if Mender downloads.
+			} else if downloaderType == unknownDownloader {
+				// File name was published successfully in
+				// "stream-next". This means the module is the
+				// downloader.
+				downloaderType = moduleDownloader
+			}
+
+		case d.finishFlag = <-d.finishChan:
+			if downloaderType == menderDownloader {
+				return nil
+			} else {
+				// Signal to module that we are done by
+				// returning zero length read.
+				d.publishNameInStreamNext("")
+			}
+		}
+		log.Errorf("SCOPE, %p", &cmdErr)
+
+		if currentStream != nil {
+			if downloaderType == menderDownloader {
+				err = d.downloadStreamInDir(currentStream, "files",
+					os.O_CREATE | os.O_EXCL | os.O_WRONLY)
+				d.status <- err
+				currentStream = nil
+			} else if downloaderType == moduleDownloader {
+				err = d.downloadStreamInDir(currentStream, "streams",
+					os.O_WRONLY)
+				d.status <- err
+				currentStream = nil
+			}
+			// } else {
+			// 	We need to wait for a decision on
+			// 	downloaderType first.
+			// }
+		}
+	}
+}
+
+func (d *moduleDownload) publishNameInStreamNext(name string) error {
+	if name != "" {
+		log.Error("TODO: Consider doing character check here")
+		streamName := path.Join(d.payloadPath, "streams", name)
+		err := syscall.Mkfifo(streamName, 0600)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Finished setup, but final status will be available in
+	// streamNextStatus, since it depends on what the module does.
+
+	go func() {
+		err := func() error {
+			var err error
+			d.streamNext, err = os.OpenFile(path.Join(d.payloadPath, "stream-next"), os.O_WRONLY, 0)
+			if err != nil {
+				return err
+			}
+
+			var streamNextStr string
+			if name == "" {
+				streamNextStr = ""
+			} else {
+				streamNextStr = fmt.Sprintf("streams/%s\n", name)
+			}
+
+			n, err := d.streamNext.Write([]byte(streamNextStr))
+			// Important to close, so that the module gets EOF and carries
+			// on.
+			d.streamNext.Close()
+			if err == nil && n != len(streamNextStr) {
+				return errors.New("Unable to write entire entry to stream-next")
+			} else {
+				return err
+			}
+		}()
+		d.streamNextStatus <- err
+	}()
+
+	return nil
+}
+
+func (d *moduleDownload) initializeMenderDownload() error {
+	// We could still be trying to write to the "stream-next" file in a go
+	// routine, so close that to avoid leaking memory, and to delete it.
+	d.streamNext.Close()
+
+	err := os.RemoveAll(path.Join(d.payloadPath, "streams"))
+	if err != nil {
+		return err
+	}
+	err = os.Remove(path.Join(d.payloadPath, "stream-next"))
+	if err != nil {
+		return err
+	}
+
+	err = os.Mkdir(path.Join(d.payloadPath, "files"), 0700)
+	return err
+}
+
+func (d *moduleDownload) downloadStreamInDir(stream *readerAndNamePair,
+	subdir string, openFlags int) error {
+
+	filePath := path.Join(d.payloadPath, subdir, stream.name)
+	fd, err := os.OpenFile(filePath, openFlags, 0600)
+	if err != nil {
+		return err
+	}
+	defer fd.Close()
+
+	_, err = io.Copy(fd, stream.r)
+	return err
+}
+
+func (d *moduleDownload) downloadStream(r io.Reader, name string) error {
+	d.nextStream <- readerAndNamePair{r, name}
+	err := <-d.status
+	return err
+}
+
+func (d *moduleDownload) finishDownloadProcess() error {
+	d.finishChan <- true
+	err := <-d.status
+	return err
 }
 
 func (mod *ModuleInstaller) PrepareStoreUpdate(artifactHeaders,
@@ -243,8 +488,8 @@ func (mod *ModuleInstaller) PrepareStoreUpdate(artifactHeaders,
 
 	log.Debug("Executing ModuleInstaller.PrepareStoreUpdate")
 
-	if mod.storeUpdateCmd != nil {
-		return errors.New("Internal error: PrepareStoreUpdate() called when store cmd is already active")
+	if mod.downloader != nil {
+		return errors.New("Internal error: PrepareStoreUpdate() called when download is already active")
 	}
 
 	if artifactAugmentedHeaders != nil {
@@ -255,13 +500,32 @@ func (mod *ModuleInstaller) PrepareStoreUpdate(artifactHeaders,
 
 	err := mod.buildStreamsTree(artifactHeaders, artifactAugmentedHeaders, payloadHeaders)
 
-	mod.storeUpdateCmd = exec.Command(mod.programPath, "Download")
-	err = mod.storeUpdateCmd.Start()
+	storeUpdateCmd := exec.Command(mod.programPath, "Download")
+	storeUpdateCmd.Dir = mod.payloadPath()
+	output, err := storeUpdateCmd.StdoutPipe()
 	if err != nil {
-		mod.storeUpdateCmd.Process.Kill()
+		return err
+	}
+	storeUpdateCmd.Stderr = storeUpdateCmd.Stdout
+
+	go func() {
+		_, err := mod.readAndLog(output, false)
+		if err != nil {
+			log.Error(err.Error())
+		}
+	}()
+
+	err = storeUpdateCmd.Start()
+	if err != nil {
 		log.Errorf("Module could not be executed: %s", err.Error())
 		return errors.Wrap(err, "Module could not be executed")
 	}
+
+	log.Error("TODO: FIX TIMER HERE!")
+	mod.processKiller = newDelayKiller(storeUpdateCmd.Process, 5 * time.Second, 5 * time.Second)
+	mod.downloader = newModuleDownload(mod.payloadPath(), storeUpdateCmd)
+
+	go mod.downloader.detachedDownloadProcess()
 
 	return nil
 }
@@ -269,23 +533,27 @@ func (mod *ModuleInstaller) PrepareStoreUpdate(artifactHeaders,
 func (mod *ModuleInstaller) StoreUpdate(r io.Reader, info os.FileInfo) error {
 	log.Debug("Executing ModuleInstaller.StoreUpdate")
 
-	if mod.storeUpdateCmd == nil {
-		return errors.New("Internal error: StoreUpdate() called when store cmd is inactive")
+	if mod.downloader == nil {
+		return errors.New("Internal error: StoreUpdate() called when download is inactive")
 	}
 
-	io.Copy(ioutil.Discard, r)
-	_, err := mod.callModule("Download", false)
-	return err
+	return mod.downloader.downloadStream(r, info.Name())
 }
 
 func (mod *ModuleInstaller) FinishStoreUpdate() error {
 	log.Debug("Executing ModuleInstaller.FinishStoreUpdate")
 
-	if mod.storeUpdateCmd == nil {
-		return errors.New("Internal error: FinishStoreUpdate() called when store cmd is inactive")
+	if mod.downloader == nil {
+		return errors.New("Internal error: FinishStoreUpdate() called when download is inactive")
 	}
 
-	return nil
+	err := mod.downloader.finishDownloadProcess()
+	mod.processKiller.Stop()
+
+	mod.downloader = nil
+	mod.processKiller = nil
+
+	return err
 }
 
 func (mod *ModuleInstaller) InstallUpdate() error {

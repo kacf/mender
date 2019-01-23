@@ -143,9 +143,20 @@ func TestCorrectUpdateProducerReturned(t *testing.T) {
 
 type fDevice struct{}
 
+func (d *fDevice) PrepareStoreUpdate(artifactHeaders,
+	artifactAugmentedHeaders artifact.HeaderInfoer,
+	payloadHeaders handlers.ArtifactUpdateHeaders) error {
+
+	return nil
+}
+
 func (d *fDevice) StoreUpdate(r io.Reader, info os.FileInfo) error {
 	_, err := io.Copy(ioutil.Discard, r)
 	return err
+}
+
+func (d *fDevice) FinishStoreUpdate() error {
+	return nil
 }
 
 func (d *fDevice) InstallUpdate() error { return nil }

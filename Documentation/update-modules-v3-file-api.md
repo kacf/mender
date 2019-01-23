@@ -172,7 +172,7 @@ if `Download` fails.
 
 **[Unimplemented]**
 
-`ArtifactRollback` is only considered in some circumstances. Before the
+`ArtifactRollback` is only considered in some circumstances. After the
 `Download` state, Mender calls the update module with:
 
 ```bash
@@ -436,7 +436,8 @@ update. The stream is taken from the `data/nnnn.tar.gz` payload that corresponds
 to the indexed subfolder being processed by Mender, just like the header.
 
 When there are no more streams left, reading `stream-next` will result in a zero
-length read.
+length read. The update module must not attempt to read `stream-next` again
+after receiving a zero length read, or the update procedure may hang.
 
 **Important:** Reads must proceed in the following order: one complete read of
 `stream-next` (will always be exactly one line), then read the stream it

@@ -32,11 +32,7 @@ type Rebooter interface {
 
 type PayloadInstaller interface {
 	Rebooter
-	PrepareStoreUpdate(artifactHeaders,
-		artifactAugmentedHeaders artifact.HeaderInfoer,
-		payloadHeaders handlers.ArtifactUpdateHeaders) error
-	StoreUpdate(r io.Reader, info os.FileInfo) error
-	FinishStoreUpdate() error
+	handlers.UpdateStorer
 	InstallUpdate() error
 	NeedsReboot() (bool, error)
 	CommitUpdate() error

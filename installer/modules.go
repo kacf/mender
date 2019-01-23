@@ -681,6 +681,9 @@ func (mod *ModuleInstaller) PrepareStoreUpdate(artifactHeaders,
 	}
 
 	err := mod.buildStreamsTree(artifactHeaders, artifactAugmentedHeaders, payloadHeaders)
+	if err != nil {
+		return err
+	}
 
 	storeUpdateCmd := exec.Command(mod.programPath, "Download")
 	storeUpdateCmd.Dir = mod.payloadPath()

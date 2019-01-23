@@ -16,6 +16,7 @@ package installer
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -58,9 +60,11 @@ func newDelayKiller(proc *os.Process, killAfter, kill9After time.Duration) *dela
 		proc: proc,
 	}
 	k.killer = time.AfterFunc(killAfter, func(){
+		log.Errorf("Process %d timed out. Sending SIGTERM", k.proc.Pid)
 		k.proc.Kill()
 	})
 	k.hardKiller = time.AfterFunc(killAfter + kill9After, func(){
+		log.Errorf("Process %d timed out. Sending SIGKILL", k.proc.Pid)
 		k.proc.Signal(os.Kill)
 	})
 	return k
@@ -259,6 +263,73 @@ func (mod *ModuleInstaller) buildStreamsTree(artifactHeaders,
 	return nil
 }
 
+type oneStream struct {
+	r         io.Reader
+	name      string
+	openFlags int
+	status    chan error
+}
+
+func newOneStream(r io.Reader, name string, openFlags int) *oneStream {
+	return &oneStream{
+		r: r,
+		name: name,
+		openFlags: openFlags,
+	}
+}
+
+func (s *oneStream) startStream() {
+	s.status = make(chan error)
+	runtime.SetFinalizer(s, func(s *oneStream){
+		s.cancelStream()
+	})
+	// Use function arguments so that garbage collector can destroy outer
+	// object, and invoke our finalizer.
+	go func(r io.Reader, name string, openFlags int, status chan error) {
+		defer close(status)
+
+		fd, err := os.OpenFile(name, openFlags, 0600)
+		if err != nil {
+			status <- errors.Wrapf(err, "Unable to open %s", name)
+			return
+		}
+		defer fd.Close()
+
+		_, err = io.Copy(fd, r)
+		if err != nil {
+			status <- errors.Wrapf(err, "Unable to stream into %s", name)
+			return
+		}
+
+		status <- nil
+	}(s.r, s.name, s.openFlags, s.status)
+}
+
+func (s *oneStream) cancelStream() {
+	// Open and immediately close the pipe to shake loose the download
+	// process. We use the non-blocking flag so that we ourselves do not get
+	// stuck.
+
+	for {
+		select {
+		case _, _ = <-s.status:
+			// Go routine has returned, or channel is closed.
+			return
+		default:
+			cancel, err := os.OpenFile(s.name, os.O_RDONLY | syscall.O_NONBLOCK, 0600)
+			if err == nil {
+				cancel.Close()
+			}
+			// Yield so that other routine finishes quickly.
+			runtime.Gosched()
+		}
+	}
+}
+
+func (s *oneStream) streamStatusChannel() chan error {
+	return s.status
+}
+
 const (
 	unknownDownloader = 0
 	moduleDownloader = 1
@@ -274,175 +345,296 @@ type moduleDownload struct {
 	payloadPath string
 	proc        *exec.Cmd
 
-	nextStream       chan readerAndNamePair
-	streamNext       *os.File
-	streamNextStatus chan error
+	// Channel for supplying new payload files while the download loop is
+	// running
+	nextArtifactStream chan *readerAndNamePair
 
-	status     chan error
-	finishChan chan bool
-	finishFlag bool
+	// Status return to calling function
+	status        chan error
+
+	finishChannel chan bool
+
+	////////////////////////////////////////////////////////////////////////
+	// Status variables for mail loop.
+	////////////////////////////////////////////////////////////////////////
+
+	// Status channel for the module process
+	cmdErr         chan error
+
+	// Used to keep track of whether we are letting the module or the client
+	// do the streaming. It starts out as unknownDownloader, and switches to
+	// moduleDownloader or menderDownloader once we know.
+	downloaderType int
+
+	// The current stream, read from nextArtifactStream
+	currentStream  *readerAndNamePair
+	finishFlag     bool
+	// The streaming object for the "stream-next" file
+	streamNext     *oneStream
+	// The streaming object for the stream itself
+	stream         *oneStream
+
+	////////////////////////////////////////////////////////////////////////
+	// End of status variables
+	////////////////////////////////////////////////////////////////////////
 }
 
 func newModuleDownload(payloadPath string, proc *exec.Cmd) *moduleDownload {
 	return &moduleDownload{
-		payloadPath,
-		proc,
-		make(chan readerAndNamePair),
-		nil,
-		make(chan error),
-		make(chan error),
-		make(chan bool),
-		false,
+		payloadPath: payloadPath,
+		proc: proc,
+		nextArtifactStream: make(chan *readerAndNamePair),
+		status: make(chan error),
+		finishChannel: make(chan bool),
+		cmdErr: make(chan error),
 	}
 }
 
 // Should be called in a subroutine.
 func (d *moduleDownload) detachedDownloadProcess() {
 	err := d.downloadProcessLoop()
-	log.Error("OUT")
 	d.status <- err
 }
 
-// Loop to receive new stream requests and process them. It gets the download
-// reader via the nextStream channel, and then publishes this in the streamNext
-// stream (which is the "stream-next" FIFO), and gets the status from this
-// publication in streamNextStatus. It then performs the download either by
-// piping to a streams FIFO or a file, depending on whether the update module
-// consumed the entry from "stream-next".
-func (d *moduleDownload) downloadProcessLoop() error {
-	cmdErr := make(chan error)
-	go func() {
-		err := d.proc.Wait()
-		log.Errorf("HERE2, %p, %s", &cmdErr, err.Error())
-		cmdErr <- err
-		log.Errorf("HERE4, %p", &cmdErr)
-	}()
-
-	downloaderType := unknownDownloader
-	var currentStream *readerAndNamePair
-	var err error
-
-	for {
-		log.Errorf("HERE, %p", &cmdErr)
-		select {
-		case err = <-cmdErr:
-		log.Errorf("HERE3, %p", &cmdErr)
-			if err != nil {
-				return err
-			} else if d.finishFlag {
-				return nil
-			} else if downloaderType != unknownDownloader {
-				return errors.New("Module process terminated in the middle of download")
-			}
-
-			// Process terminated without doing any
-			// downloading. This means Mender should download.
-			downloaderType = menderDownloader
-
-			err = d.initializeMenderDownload()
-			if err != nil {
-				return err
-			}
-
-		case stream := <-d.nextStream:
-			if downloaderType != menderDownloader {
-				d.publishNameInStreamNext(stream.name)
-			}
-			currentStream = &stream
-
-		case err = <-d.streamNextStatus:
-			if err != nil {
-				if downloaderType != menderDownloader {
-					return err
-				}
-				// We don't care what happens to the pipe if Mender downloads.
-			} else if downloaderType == unknownDownloader {
-				// File name was published successfully in
-				// "stream-next". This means the module is the
-				// downloader.
-				downloaderType = moduleDownloader
-			}
-
-		case d.finishFlag = <-d.finishChan:
-			if downloaderType == menderDownloader {
-				return nil
-			} else {
-				// Signal to module that we are done by
-				// returning zero length read.
-				d.publishNameInStreamNext("")
-			}
-		}
-		log.Errorf("SCOPE, %p", &cmdErr)
-
-		if currentStream != nil {
-			if downloaderType == menderDownloader {
-				err = d.downloadStreamInDir(currentStream, "files",
-					os.O_CREATE | os.O_EXCL | os.O_WRONLY)
-				d.status <- err
-				currentStream = nil
-			} else if downloaderType == moduleDownloader {
-				err = d.downloadStreamInDir(currentStream, "streams",
-					os.O_WRONLY)
-				d.status <- err
-				currentStream = nil
-			}
-			// } else {
-			// 	We need to wait for a decision on
-			// 	downloaderType first.
-			// }
-		}
+func (d *moduleDownload) waitForProcessStatus(original error) error {
+	cErr := <-d.cmdErr
+	if cErr != nil {
+		return errors.Wrap(original, cErr.Error())
+	} else {
+		return original
 	}
 }
 
-func (d *moduleDownload) publishNameInStreamNext(name string) error {
-	if name != "" {
-		log.Error("TODO: Consider doing character check here")
-		streamName := path.Join(d.payloadPath, "streams", name)
-		err := syscall.Mkfifo(streamName, 0600)
-		if err != nil {
-			return err
+func (d *moduleDownload) handleCmdErr(err error) (bool, error) {
+	d.proc = nil
+	d.cmdErr = nil
+
+	if err != nil {
+		// Command error: Always an error.
+		return false, errors.Wrap(err, "Update module terminated abnormally")
+
+	} else if d.finishFlag {
+		// Process terminated, we are done!
+		return true, nil
+
+	} else if d.downloaderType == unknownDownloader {
+
+		d.downloaderType = menderDownloader
+
+		// We could still be trying to write to the "stream-next" file
+		// in a go routine, so cancel that.
+		if d.streamNext != nil {
+			d.streamNext.cancelStream()
+			d.streamNext = nil
 		}
+
+		err = d.initializeMenderDownload()
+		if err != nil {
+			return false, err
+		}
+
+		if d.currentStream != nil {
+			// We may have gotten a stream already. Start
+			// downloading it straight into "files" directory.
+			filePath := path.Join(d.payloadPath, "files", d.currentStream.name)
+			d.stream = newOneStream(d.currentStream.r, filePath,
+				os.O_WRONLY | os.O_CREATE | os.O_EXCL)
+			d.stream.startStream()
+		}
+
+	} else if d.downloaderType == moduleDownloader {
+		// Should always get finishFlag before this happens.
+		return false, errors.New("Update module terminated in the middle of the download")
 	}
 
-	// Finished setup, but final status will be available in
-	// streamNextStatus, since it depends on what the module does.
+	return false, nil
+}
 
-	go func() {
-		err := func() error {
-			var err error
-			d.streamNext, err = os.OpenFile(path.Join(d.payloadPath, "stream-next"), os.O_WRONLY, 0)
-			if err != nil {
-				return err
-			}
-
-			var streamNextStr string
-			if name == "" {
-				streamNextStr = ""
-			} else {
-				streamNextStr = fmt.Sprintf("streams/%s\n", name)
-			}
-
-			n, err := d.streamNext.Write([]byte(streamNextStr))
-			// Important to close, so that the module gets EOF and carries
-			// on.
-			d.streamNext.Close()
-			if err == nil && n != len(streamNextStr) {
-				return errors.New("Unable to write entire entry to stream-next")
-			} else {
-				return err
-			}
-		}()
-		d.streamNextStatus <- err
-	}()
+func (d *moduleDownload) handleNextArtifactStream() error {
+	if d.downloaderType == menderDownloader {
+		// Download new stream straight to "files".
+		filePath := path.Join(d.payloadPath, "files", d.currentStream.name)
+		d.stream = newOneStream(d.currentStream.r, filePath,
+			os.O_WRONLY | os.O_CREATE | os.O_EXCL)
+		d.stream.startStream()
+	} else {
+		// Download new stream to update module using "stream-next" and
+		// "streams" directory.
+		var err error
+		d.streamNext, err = d.publishNameInStreamNext(d.currentStream.name)
+		if err != nil {
+			return d.waitForProcessStatus(err)
+		}
+		d.streamNext.startStream()
+	}
 
 	return nil
 }
 
-func (d *moduleDownload) initializeMenderDownload() error {
-	// We could still be trying to write to the "stream-next" file in a go
-	// routine, so close that to avoid leaking memory, and to delete it.
-	d.streamNext.Close()
+func (d *moduleDownload) handleStreamNextChannel(err error) error {
+	d.streamNext = nil
 
+	if d.downloaderType == menderDownloader {
+		// We don't care about this status if we have switched to the
+		// Mender downloader.
+		return nil
+	}
+
+	if err != nil {
+		return d.waitForProcessStatus(err)
+	}
+
+	if d.downloaderType == unknownDownloader {
+		d.downloaderType = moduleDownloader
+	}
+
+	if d.finishFlag {
+		// Streaming is finished. Return and wait for
+		// process to terminate.
+		return nil
+	}
+
+	// Process has read from "stream-next", now stream into
+	// the file in the "streams" directory.
+	filePath := path.Join(d.payloadPath, "streams", d.currentStream.name)
+	d.stream = newOneStream(d.currentStream.r, filePath,
+		os.O_WRONLY)
+	d.stream.startStream()
+
+	return nil
+}
+
+func (d *moduleDownload) handleStreamChannel(err error) error {
+	d.stream = nil
+
+	// Process has finished streaming, give back status.
+	if err != nil {
+		// If error, bail.
+		return d.waitForProcessStatus(err)
+	} else {
+		// If successful, stay in loop.
+		d.status <- err
+		return nil
+	}
+}
+
+func (d *moduleDownload) handleFinishChannel() (bool, error) {
+	d.finishFlag = true
+
+	if d.downloaderType != menderDownloader {
+		// Publish empty entry to signal end of streams.
+		var err error
+		d.streamNext, err = d.publishNameInStreamNext("")
+		if err != nil {
+			return false, d.waitForProcessStatus(err)
+		}
+		d.streamNext.startStream()
+
+	} else if d.proc == nil {
+		// Finish has been requested, and the process
+		// has already terminated. We are done.
+		return true, nil
+	}
+
+	return false, nil
+}
+
+// Loop to receive new stream requests and process them. It is essentially an
+// event loop that handles input from several sources:
+//
+// 1. The update module process. Only one of these processes will run for all
+//    the downloads, since each state is only invoked once.
+//
+// 2. nextArtifactStream: The channel which the client uses to deliver new
+//    payload files while parsing the artifact
+//
+// 3. streamNextChannel: The channel that contains the error status of the
+//    latest write to the "stream-next" file
+//
+// 4. streamChannel: The channel that contains the error status of the latest
+//    write of the payload file, whether that is to a FIFO in the "streams"
+//    directory or a file in the "files" directory
+//
+// 5. finishChannel: Used by the client to signal that all payload files have
+//    been read, IOW to terminate the loop
+func (d *moduleDownload) downloadProcessLoop() error {
+	go func() {
+		err := d.proc.Wait()
+		d.cmdErr <- err
+	}()
+
+	// Corresponds to "stream-next" file and actual streaming file.
+	defer func(){
+		if d.streamNext != nil {
+			d.streamNext.cancelStream()
+		}
+		if d.stream != nil {
+			d.stream.cancelStream()
+		}
+	}()
+
+	for {
+		var streamNextChannel chan error
+		if d.streamNext != nil {
+			streamNextChannel = d.streamNext.streamStatusChannel()
+		}
+		var streamChannel chan error
+		if d.stream != nil {
+			streamChannel = d.stream.streamStatusChannel()
+		}
+
+		var finished bool
+		var err error
+
+		select {
+		case err = <-d.cmdErr:
+			finished, err = d.handleCmdErr(err)
+
+		case d.currentStream = <-d.nextArtifactStream:
+			err = d.handleNextArtifactStream()
+
+		case err = <-streamNextChannel:
+			err = d.handleStreamNextChannel(err)
+
+		case err = <-streamChannel:
+			err = d.handleStreamChannel(err)
+
+		case <-d.finishChannel:
+			finished, err = d.handleFinishChannel()
+		}
+
+		if err != nil {
+			return err
+		} else if finished {
+			return nil
+		}
+	}
+}
+
+func (d *moduleDownload) publishNameInStreamNext(name string) (*oneStream, error) {
+	if name != "" {
+		streamName := path.Join(d.payloadPath, "streams", name)
+		err := syscall.Mkfifo(streamName, 0600)
+		if err != nil {
+			return nil, errors.Wrapf(err, "Unable to create %s", streamName)
+		}
+	}
+
+	var streamNextStr string
+	if name == "" {
+		streamNextStr = ""
+	} else {
+		streamNextStr = fmt.Sprintf("streams/%s\n", name)
+	}
+	buf := bytes.NewBuffer([]byte(streamNextStr))
+
+	streamPath := path.Join(d.payloadPath, "stream-next")
+	stream := newOneStream(buf, streamPath, os.O_WRONLY)
+
+	return stream, nil
+}
+
+func (d *moduleDownload) initializeMenderDownload() error {
 	err := os.RemoveAll(path.Join(d.payloadPath, "streams"))
 	if err != nil {
 		return err
@@ -456,28 +648,18 @@ func (d *moduleDownload) initializeMenderDownload() error {
 	return err
 }
 
-func (d *moduleDownload) downloadStreamInDir(stream *readerAndNamePair,
-	subdir string, openFlags int) error {
-
-	filePath := path.Join(d.payloadPath, subdir, stream.name)
-	fd, err := os.OpenFile(filePath, openFlags, 0600)
-	if err != nil {
-		return err
-	}
-	defer fd.Close()
-
-	_, err = io.Copy(fd, stream.r)
-	return err
-}
-
+// If this returns any errors, the download should be considered cancelled, and
+// no further functions should be called.
 func (d *moduleDownload) downloadStream(r io.Reader, name string) error {
-	d.nextStream <- readerAndNamePair{r, name}
+	d.nextArtifactStream <- &readerAndNamePair{r, name}
 	err := <-d.status
 	return err
 }
 
+// This function should only be called if downloadStream() did not return any
+// errors, otherwise the program may hang.
 func (d *moduleDownload) finishDownloadProcess() error {
-	d.finishChan <- true
+	d.finishChannel <- true
 	err := <-d.status
 	return err
 }
@@ -579,7 +761,8 @@ func (mod *ModuleInstaller) NeedsReboot() (bool, error) {
 
 func (mod *ModuleInstaller) Reboot() error {
 	log.Debug("Executing ModuleInstaller.Reboot")
-	return nil
+	_, err := mod.callModule("ArtifactReboot", false)
+	return err
 }
 
 func (mod *ModuleInstaller) SupportsRollback() (bool, error) {

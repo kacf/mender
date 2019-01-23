@@ -23,10 +23,14 @@ import (
 	"os/exec"
 	"path"
 	"reflect"
+	"runtime"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/mendersoftware/mender-artifact/artifact"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -252,6 +256,7 @@ func moduleDownloadSetup(t *testing.T, tmpdir, helperArg string) *moduleDownload
 	cmd := exec.Command(path.Join(cwd, "modules_test_helper.sh"), helperArg)
 	cmd.Dir = tmpdir
 	require.NoError(t, cmd.Start())
+	newDelayKiller(cmd.Process, 5 * time.Second, time.Second)
 
 	download := newModuleDownload(tmpdir, cmd)
 	go download.detachedDownloadProcess()
@@ -259,54 +264,156 @@ func moduleDownloadSetup(t *testing.T, tmpdir, helperArg string) *moduleDownload
 	return download
 }
 
-func TestModulesMenderDownload(t *testing.T) {
-	tmpdir, err := ioutil.TempDir("", "TestModuleDownload")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpdir)
+type modulesDownloadTestCase struct {
+	testName         string
+	scriptArg        string
 
-	download := moduleDownloadSetup(t, tmpdir, "menderDownload")
+	// Must be same length
+	streamContents   []string
+	streamNames      []string
+	verifyFiles      []string
 
-	buf := bytes.NewBuffer([]byte("Test content"))
-	require.NoError(t, download.downloadStream(buf, "test-name"))
-
-	require.NoError(t, download.finishDownloadProcess())
-
-	verifyFileContent(t, path.Join(tmpdir, "files", "test-name"), "Test content")
+	verifyNotExist   []string
+	remove           []string
+	create           []string
+	downloadErr      error
+	finishErr        error
 }
 
-func TestModulesModuleDownload(t *testing.T) {
-	tmpdir, err := ioutil.TempDir("", "TestModuleDownload")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpdir)
-
-	download := moduleDownloadSetup(t, tmpdir, "moduleDownload")
-
-	buf := bytes.NewBuffer([]byte("Test content"))
-	require.NoError(t, download.downloadStream(buf, "test-name"))
-
-	require.NoError(t, download.finishDownloadProcess())
-
-	verifyFileContent(t, path.Join(tmpdir, "tmp", "module-downloaded-file"), "Test content")
-	// Check that Mender doesn't also create the file.
-	_, err = os.Stat(path.Join(tmpdir, "files", "test-name"))
-	assert.True(t, os.IsNotExist(err))
+var modulesDownloadTestCases []modulesDownloadTestCase = []modulesDownloadTestCase{
+	modulesDownloadTestCase{
+		testName: "Mender download",
+		scriptArg: "menderDownload",
+		streamContents: []string{"Test content"},
+		streamNames: []string{"test-name"},
+		verifyFiles: []string{"files/test-name"},
+	},
+	modulesDownloadTestCase{
+		testName: "Module download",
+		scriptArg: "moduleDownload",
+		streamContents: []string{"Test content"},
+		streamNames: []string{"test-name"},
+		verifyFiles: []string{"tmp/module-downloaded-file0"},
+		// Check that Mender doesn't also create the file.
+		verifyNotExist: []string{"files/test-name"},
+	},
+	modulesDownloadTestCase{
+		testName: "Module download failure",
+		scriptArg: "moduleDownloadFailure",
+		streamContents: []string{"Test content"},
+		streamNames: []string{"test-name"},
+		verifyNotExist: []string{"files/test-name"},
+		downloadErr: errors.New("Update module terminated abnormally: exit status 1"),
+	},
+	modulesDownloadTestCase{
+		testName: "Module download short read of stream-next",
+		scriptArg: "moduleDownloadStreamNextShortRead",
+		streamContents: []string{"Test content"},
+		streamNames: []string{"test-name"},
+		verifyNotExist: []string{"files/test-name"},
+		downloadErr: errors.New("Update module terminated in the middle of the download"),
+	},
+	modulesDownloadTestCase{
+		testName: "Module download short read of stream",
+		scriptArg: "moduleDownloadStreamShortRead",
+		// Because of buffering, we need a long string to detect short
+		// reads.
+		streamContents: []string{strings.Repeat("0", 10000000)},
+		streamNames: []string{"test-name"},
+		verifyNotExist: []string{"files/test-name"},
+		downloadErr: errors.New("broken pipe"),
+	},
+	modulesDownloadTestCase{
+		testName: "Cannot open stream file",
+		scriptArg: "moduleDownload",
+		streamContents: []string{"Test content"},
+		streamNames: []string{"test-name"},
+		verifyNotExist: []string{"files/test-name"},
+		remove: []string{"streams"},
+		downloadErr: errors.New("no such file or directory"),
+	},
+	modulesDownloadTestCase{
+		testName: "files dir blocked by file",
+		scriptArg: "menderDownload",
+		streamContents: []string{"Test content"},
+		streamNames: []string{"test-name"},
+		create: []string{"files"},
+		downloadErr: errors.New("file exists"),
+	},
+	modulesDownloadTestCase{
+		testName: "Mender download multiple files",
+		scriptArg: "menderDownload",
+		streamContents: []string{"Test content", "more content"},
+		streamNames: []string{"test-name", "another-name"},
+		verifyFiles: []string{"files/test-name", "files/another-name"},
+	},
+	modulesDownloadTestCase{
+		testName: "Module download multiple files",
+		scriptArg: "moduleDownload",
+		streamContents: []string{"Test content", "more content"},
+		streamNames: []string{"test-name", "another-name"},
+		verifyFiles: []string{"tmp/module-downloaded-file0", "tmp/module-downloaded-file1"},
+	},
 }
 
-func TestModulesModuleDownloadFailure(t *testing.T) {
+func TestModulesDownload(t *testing.T) {
+	for _, c := range modulesDownloadTestCases {
+		t.Run(c.testName, func(t *testing.T){
+			subTestModulesDownload(t, &c)
+		})
+	}
+}
+
+func assertIsError(t *testing.T, expected, actual error) {
+	if expected == nil {
+		assert.NoError(t, actual)
+	} else {
+		assert.Error(t, actual)
+		if actual != nil {
+			assert.Contains(t, actual.Error(), expected.Error())
+		}
+	}
+}
+
+func subTestModulesDownload(t *testing.T, c *modulesDownloadTestCase) {
 	tmpdir, err := ioutil.TempDir("", "TestModuleDownload")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpdir)
 
-	download := moduleDownloadSetup(t, tmpdir, "moduleDownloadFailure")
+	goRoutines := runtime.NumGoroutine()
 
-	buf := bytes.NewBuffer([]byte("Test content"))
-	require.NoError(t, download.downloadStream(buf, "test-name"))
+	download := moduleDownloadSetup(t, tmpdir, c.scriptArg)
 
-	panic("HERE")
-	require.NoError(t, download.finishDownloadProcess())
+	for _, file := range c.remove {
+		require.NoError(t, os.RemoveAll(path.Join(tmpdir, file)))
+	}
+	for _, file := range c.create {
+		fd, err := os.OpenFile(path.Join(tmpdir, file), os.O_WRONLY | os.O_CREATE, 0600)
+		require.NoError(t, err)
+		fd.Close()
+	}
 
-	verifyFileContent(t, path.Join(tmpdir, "tmp", "module-downloaded-file"), "Test content")
-	// Check that Mender doesn't also create the file.
-	_, err = os.Stat(path.Join(tmpdir, "files", "test-name"))
-	assert.True(t, os.IsNotExist(err))
+	for n := range c.streamContents {
+		buf := bytes.NewBuffer([]byte(c.streamContents[n]))
+		err = download.downloadStream(buf, c.streamNames[n])
+		assertIsError(t, c.downloadErr, err)
+	}
+
+	if err == nil {
+		err = download.finishDownloadProcess()
+		assertIsError(t, c.finishErr, err)
+	}
+
+	for n := range c.verifyFiles {
+		verifyFileContent(t, path.Join(tmpdir, c.verifyFiles[n]), c.streamContents[n])
+	}
+
+	for _, file := range c.verifyNotExist {
+		_, err = os.Stat(path.Join(tmpdir, file))
+		assert.True(t, os.IsNotExist(err))
+	}
+
+	// Make sure the downloader didn't leak any Go routines.
+	runtime.GC()
+	assert.Equal(t, goRoutines, runtime.NumGoroutine(), "Downloader leaked go routines")
 }

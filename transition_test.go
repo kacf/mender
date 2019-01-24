@@ -280,6 +280,7 @@ func TestTransitionReporting(t *testing.T) {
 			}
 			CompatibleDevices []string `json:"device_types_compatible"`
 			ArtifactName      string   `json:"artifact_name"`
+			PayloadTypes      []string
 		}{
 			Source: struct {
 				URI    string

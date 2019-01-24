@@ -94,6 +94,8 @@ const (
 	MenderStateUpdateError
 	// exit state
 	MenderStateDone
+	// cleanup state
+	MenderStateUpdateCleanup
 )
 
 var (
@@ -177,6 +179,7 @@ type UpdateInfo struct {
 		}
 		CompatibleDevices []string `json:"device_types_compatible"`
 		ArtifactName      string   `json:"artifact_name"`
+		PayloadTypes      []string
 	}
 	ID string
 	// Whether the currently running update asked for reboot

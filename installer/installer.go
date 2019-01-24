@@ -45,6 +45,8 @@ type PayloadInstaller interface {
 	VerifyRollbackReboot() error
 	Failure() error
 	Cleanup() error
+
+	GetType() string
 }
 
 type UpdateStorerProducers struct {
@@ -61,8 +63,12 @@ type DeviceInfoGetter interface {
 	GetDeviceType() (string, error)
 }
 
-func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
-	inst *UpdateStorerProducers) ([]PayloadInstaller, error) {
+type Installer struct {
+	ar *areader.Reader
+}
+
+func ReadHeaders(art io.ReadCloser, dt string, key []byte, scrDir string,
+	inst *UpdateStorerProducers) (*Installer, []PayloadInstaller, error) {
 
 	var ar *areader.Reader
 	var installers []PayloadInstaller
@@ -80,7 +86,7 @@ func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
 	ar.ForbidUnknownHandlers = true
 
 	if err = registerHandlers(ar, inst); err != nil {
-		return installers, err
+		return nil, installers, err
 	}
 
 	ar.CompatibleDevicesCallback = func(devices []string) error {
@@ -127,7 +133,7 @@ func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
 	if err = scr.Clear(); err != nil {
 		log.Errorf("installer: error initializing directory for scripts [%s]: %v",
 			scrDir, err)
-		return installers, errors.Wrap(err, "installer: error initializing directory for scripts")
+		return nil, installers, errors.Wrap(err, "installer: error initializing directory for scripts")
 	}
 
 	// All the scripts that are part of the artifact will be processed here.
@@ -137,24 +143,32 @@ func Install(art io.ReadCloser, dt string, key []byte, scrDir string,
 	}
 
 	// read the artifact
-	if err = ar.ReadArtifact(); err != nil {
-		return installers, errors.Wrap(err, "installer: failed to read and install update")
+	if err = ar.ReadArtifactHeaders(); err != nil {
+		return nil, installers, errors.Wrap(err, "installer: failed to read Artifact")
 	}
 
 	if err = scr.Finalize(ar.GetInfo().Version); err != nil {
-		return installers, errors.Wrap(err, "installer: error finalizing writing scripts")
+		return nil, installers, errors.Wrap(err, "installer: error finalizing writing scripts")
 	}
 
-	installers, err = getInstallerList(ar)
+	updateStorers, err := ar.GetUpdateStorers()
 	if err != nil {
-		return installers, err
+		return nil, installers, err
+	}
+	installers, err = getInstallerList(updateStorers)
+	if err != nil {
+		return nil, installers, err
 	}
 
 	log.Debugf(
 		"installer: successfully read artifact [name: %v; version: %v; compatible devices: %v]",
 		ar.GetArtifactName(), ar.GetInfo().Version, ar.GetCompatibleDevices())
 
-	return installers, nil
+	return &Installer{ar}, installers, nil
+}
+
+func (i *Installer) StorePayloads() error {
+	return i.ar.ReadArtifactData()
 }
 
 func registerHandlers(ar *areader.Reader, inst *UpdateStorerProducers) error {
@@ -169,6 +183,11 @@ func registerHandlers(ar *areader.Reader, inst *UpdateStorerProducers) error {
 	// Update modules.
 	updateTypes := inst.Modules.GetModuleTypes()
 	for _, updateType := range updateTypes {
+		if updateType == "rootfs-image" {
+			log.Errorf("Found update module called %s, which "+
+				"cannot be overriden. Ignoring.", updateType)
+			continue
+		}
 		moduleImage := handlers.NewModuleImage(updateType)
 		moduleImage.SetUpdateStorerProducer(inst.Modules)
 		if err := ar.RegisterHandler(moduleImage); err != nil {
@@ -180,16 +199,11 @@ func registerHandlers(ar *areader.Reader, inst *UpdateStorerProducers) error {
 	return nil
 }
 
-func getInstallerList(ar *areader.Reader) ([]PayloadInstaller, error) {
+func getInstallerList(updateStorers []handlers.UpdateStorer) ([]PayloadInstaller, error) {
 	empty := []PayloadInstaller{}
 
-	fromReader, err := ar.GetUpdateStorers()
-	if err != nil {
-		return empty, err
-	}
-
-	list := make([]PayloadInstaller, len(fromReader))
-	for i, us := range fromReader {
+	list := make([]PayloadInstaller, len(updateStorers))
+	for i, us := range updateStorers {
 		installer, ok := us.(PayloadInstaller)
 		if !ok {
 			// If you got this error unexpectedly after working on
@@ -201,4 +215,44 @@ func getInstallerList(ar *areader.Reader) ([]PayloadInstaller, error) {
 	}
 
 	return list, nil
+}
+
+func CreateInstallersFromList(inst *UpdateStorerProducers,
+	desiredTypes []string) ([]PayloadInstaller, error) {
+
+	payloadStorers := make([]handlers.UpdateStorer, len(desiredTypes))
+	typesFromDisk := inst.Modules.GetModuleTypes()
+
+	for n, desired := range desiredTypes {
+		var err error
+		if desired == "rootfs-image" {
+			payloadStorers[n], err = inst.DualRootfs.NewUpdateStorer(desired, n)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		found := false
+		for _, fromDisk := range typesFromDisk {
+			if fromDisk == desired {
+				found = true
+				break
+			}
+		}
+		if !found {
+			log.Errorf("Update module %s not found when assembling list of "+
+				"update modules. Recovery may fail.", desired)
+		}
+		// Even if we don't find the update module. Construct it
+		// unconditionally. It will fail all over the place, but at
+		// least we won't get nil pointers, and it allows other existing
+		// modules to run.
+		payloadStorers[n], err = inst.Modules.NewUpdateStorer(desired, n)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return getInstallerList(payloadStorers)
 }

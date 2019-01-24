@@ -34,6 +34,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type testMenderPieces struct {
@@ -872,16 +873,14 @@ func TestMenderStoreUpdate(t *testing.T) {
 	// try some failure scenarios first
 
 	// EOF
-	err := mender.InstallArtifact(ioutil.NopCloser(&bytes.Buffer{}))
+	_, err := mender.ReadArtifactHeaders(ioutil.NopCloser(&bytes.Buffer{}))
 	assert.Error(t, err)
-	t.Logf("error: %v", err)
 
 	// some error from reader
 	mr := mockReader{}
 	mr.On("Read").Return(0, errors.New("failed"))
-	err = mender.InstallArtifact(ioutil.NopCloser(&mr))
+	_, err = mender.ReadArtifactHeaders(ioutil.NopCloser(&mr))
 	assert.Error(t, err)
-	t.Logf("error: %v", err)
 
 	// make a fake update artifact
 	upd, err := MakeRootfsImageArtifact(1, false)
@@ -890,7 +889,7 @@ func TestMenderStoreUpdate(t *testing.T) {
 
 	// setup soem bogus device_type so that we don't match the update
 	ioutil.WriteFile(deviceType, []byte("device_type=bogusdevicetype\n"), 0644)
-	err = mender.InstallArtifact(upd)
+	_, err = mender.ReadArtifactHeaders(upd)
 	assert.Error(t, err)
 
 	// try with a legit device_type
@@ -899,7 +898,9 @@ func TestMenderStoreUpdate(t *testing.T) {
 	assert.NotNil(t, upd)
 
 	ioutil.WriteFile(deviceType, []byte("device_type=vexpress-qemu\n"), 0644)
-	err = mender.InstallArtifact(upd)
+	installer, err := mender.ReadArtifactHeaders(upd)
+	require.NoError(t, err)
+	err = installer.StorePayloads()
 	assert.NoError(t, err)
 
 	// now try with device throwing errors durin ginstall
@@ -915,7 +916,9 @@ func TestMenderStoreUpdate(t *testing.T) {
 		},
 	)
 	mender.deviceTypeFile = deviceType
-	err = mender.InstallArtifact(upd)
+	installer, err = mender.ReadArtifactHeaders(upd)
+	require.NoError(t, err)
+	err = installer.StorePayloads()
 	assert.Error(t, err)
 
 }

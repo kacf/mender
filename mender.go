@@ -60,8 +60,10 @@ type Controller interface {
 	CheckScriptsCompatibility() error
 	GetScriptExecutor() statescript.Executor
 
-	InstallArtifact(from io.ReadCloser) error
+	ReadArtifactHeaders(from io.ReadCloser) (*installer.Installer, error)
 	GetInstallers() []installer.PayloadInstaller
+
+	RestoreInstallersFromTypeList(payloadTypes []string) error
 
 	StateRunner
 }
@@ -750,7 +752,8 @@ func (m *mender) CheckScriptsCompatibility() error {
 	return m.stateScriptExecutor.CheckRootfsScriptsVersion()
 }
 
-func (m *mender) InstallArtifact(from io.ReadCloser) error {
+func (m *mender) ReadArtifactHeaders(from io.ReadCloser) (*installer.Installer, error) {
+
 	deviceType, err := m.GetDeviceType()
 	if err != nil {
 		log.Errorf("Unable to verify the existing hardware. Update will continue anyways: %v : %v", defaultDeviceTypeFile, err)
@@ -761,14 +764,25 @@ func (m *mender) InstallArtifact(from io.ReadCloser) error {
 		Modules:    m.modulesFactory,
 	}
 
-	m.installers, err = installer.Install(from,
+	var i *installer.Installer
+	i, m.installers, err = installer.ReadHeaders(from,
 		deviceType,
 		m.GetArtifactVerifyKey(),
 		m.stateScriptPath,
 		&installerFactories)
-	return err
+	return i, err
 }
 
 func (m *mender) GetInstallers() []installer.PayloadInstaller {
 	return m.installers
+}
+
+func (m *mender) RestoreInstallersFromTypeList(payloadTypes []string) error {
+	var err error
+	installerFactories := &installer.UpdateStorerProducers{
+		DualRootfs: m.dualRootfsDevice,
+		Modules:    m.modulesFactory,
+	}
+	m.installers, err = installer.CreateInstallersFromList(installerFactories, payloadTypes)
+	return err
 }

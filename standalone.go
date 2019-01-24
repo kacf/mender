@@ -99,7 +99,13 @@ func doStandaloneInstallStates(art io.ReadCloser, dt string, key []byte,
 		// No doStandaloneInstallFailure here, since we have not done anything yet.
 		return err
 	}
-	installers, err := installer.Install(art, dt, key, "", installerFactories)
+	installer, installers, err := installer.ReadHeaders(art, dt, key, "", installerFactories)
+	if err != nil {
+		log.Errorf("Reading headers failed: %s", err.Error())
+		doStandaloneInstallFailure(installers, stateExec, true)
+		return err
+	}
+	err = installer.StorePayloads()
 	if err != nil {
 		log.Errorf("Download failed: %s", err.Error())
 		doStandaloneInstallFailure(installers, stateExec, true)

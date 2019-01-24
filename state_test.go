@@ -130,21 +130,25 @@ func (s *stateTestController) CheckScriptsCompatibility() error {
 	return nil
 }
 
-func (s *stateTestController) InstallArtifact(from io.ReadCloser) error {
+func (s *stateTestController) ReadArtifactHeaders(from io.ReadCloser) (*installer.Installer, error) {
 	installerFactories := installer.UpdateStorerProducers{
 		DualRootfs: s.fakeDevice,
 	}
 
-	_, err := installer.Install(from,
+	installer, _, err := installer.ReadHeaders(from,
 		"vexpress-qemu",
 		nil,
 		"",
 		&installerFactories)
-	return err
+	return installer, err
 }
 
 func (s *stateTestController) GetInstallers() []installer.PayloadInstaller {
 	return []installer.PayloadInstaller{s.fakeDevice}
+}
+
+func (s *stateTestController) RestoreInstallersFromTypeList(payloadTypes []string) error {
+	return nil
 }
 
 func (s *stateTestController) NewStatusReportWrapper(updateId string,
@@ -1123,8 +1127,10 @@ func TestMaxSendingAttempts(t *testing.T) {
 }
 
 type menderWithCustomUpdater struct {
-	mender
+	*mender
 	updater fakeUpdater
+	reportWriter io.Writer
+	lastReport string
 }
 
 func (m *menderWithCustomUpdater) CheckUpdate() (*datastore.UpdateInfo, menderError) {
@@ -1136,6 +1142,14 @@ func (m *menderWithCustomUpdater) CheckUpdate() (*datastore.UpdateInfo, menderEr
 }
 
 func (m *menderWithCustomUpdater) ReportUpdateStatus(update *datastore.UpdateInfo, status string) menderError {
+	// Don't rereport already existing status.
+	if status != m.lastReport {
+		_, err := m.reportWriter.Write([]byte(fmt.Sprintf("%s\n", status)))
+		if err != nil {
+			return NewTransientError(err)
+		}
+		m.lastReport = status
+	}
 	return nil
 }
 
@@ -1151,9 +1165,11 @@ type stateTransitionsWithUpdateModulesTestCase struct {
 	caseName           string
 	stateChain         []State
 	artifactStateChain []string
+	reportsLog         []string
 	errorStates        []string
 	spontRebootStates  []string
 	rollbackDisabled   bool
+	rebootDisabled     bool
 }
 
 var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModulesTestCase = []stateTransitionsWithUpdateModulesTestCase{
@@ -1167,13 +1183,46 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			&UpdateCommitState{},
 		},
 		artifactStateChain: []string{
-			"SupportsRollback",
 			"Download",
+			"SupportsRollback",
 			"ArtifactInstall",
 			"ArtifactCommit",
 			"Cleanup",
 		},
 		rollbackDisabled: true,
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Normal install, no rollback",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&RebootState{},
+			&AfterRebootState{},
+			&UpdateCommitState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactCommit",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"success",
+		},
+		rollbackDisabled: true,
+		rebootDisabled: true,
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
@@ -1183,15 +1232,21 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			&UpdateStoreState{},
 			&UpdateInstallState{},
 			&UpdateErrorState{},
+			&UpdateCleanupState{},
 			&UpdateStatusReportState{},
 			&IdleState{},
 		},
 		artifactStateChain: []string{
-			"SupportsRollback",
 			"Download",
+			"SupportsRollback",
 			"ArtifactInstall",
 			"ArtifactFailure",
 			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"failure",
 		},
 		errorStates: []string{"ArtifactInstall"},
 		rollbackDisabled: true,
@@ -1204,16 +1259,21 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			&UpdateStoreState{},
 			&UpdateInstallState{},
 			&UpdateErrorState{},
+			&UpdateCleanupState{},
 			&UpdateStatusReportState{},
 			&IdleState{},
 		},
 		artifactStateChain: []string{
-			"SupportsRollback",
 			"Download",
+			"SupportsRollback",
 			"ArtifactInstall",
-			"NeedsReboot",
 			"ArtifactFailure",
 			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"failure",
 		},
 		spontRebootStates: []string{"ArtifactInstall"},
 		rollbackDisabled: true,
@@ -1275,14 +1335,25 @@ func TestStateTransitionsWithUpdateModules(t *testing.T) {
 				t.Fatal(err.Error())
 			}
 
+			logContent := make([]byte, 1000)
+
 			log, err := os.Open(path.Join(tmpdir, "module.log"))
 			require.NoError(t, err)
-			logContent := make([]byte, 1000)
 			n, err := log.Read(logContent)
 			require.NoError(t, err)
 			assert.True(t, n > 0)
 			logList := strings.Split(string(bytes.TrimRight(logContent[:n], "\n")), "\n")
 			assert.Equal(t, c.artifactStateChain, logList)
+			log.Close()
+
+			log, err = os.Open(path.Join(tmpdir, "reports.log"))
+			require.NoError(t, err)
+			n, err = log.Read(logContent)
+			require.NoError(t, err)
+			assert.True(t, n > 0)
+			logList = strings.Split(string(bytes.TrimRight(logContent[:n], "\n")), "\n")
+			assert.Equal(t, c.reportsLog, logList)
+			log.Close()
 		})
 	}
 }
@@ -1368,6 +1439,14 @@ echo "$1" >> %s
 	}
 	fd.Write([]byte("fi\n"))
 
+	fd.Write([]byte("if [ \"$1\" = \"NeedsArtifactReboot\" ]; then\n"))
+	if c.rebootDisabled {
+		fd.Write([]byte("echo No\n"))
+	} else {
+		fd.Write([]byte("echo Yes\n"))
+	}
+	fd.Write([]byte("fi\n"))
+
 	fd.Write([]byte("exit 0\n"))
 }
 
@@ -1395,6 +1474,12 @@ func updateModulesSetup(t *testing.T,
 	require.NoError(t, err)
 	defer deviceTypeFd.Close()
 	deviceTypeFd.Write([]byte("device_type=test-device\n"))
+
+	artifactInfoFd, err := os.OpenFile(path.Join(tmpdir, "artifact_info"),
+		os.O_CREATE | os.O_TRUNC | os.O_WRONLY, 0644)
+	require.NoError(t, err)
+	defer artifactInfoFd.Close()
+	artifactInfoFd.Write([]byte("artifact_name=old_name\n"))
 }
 
 func subProcessSetup(t *testing.T,
@@ -1423,12 +1508,18 @@ func subProcessSetup(t *testing.T,
 
 	DeploymentLogger = NewDeploymentLogManager(path.Join(tmpdir, "logs"))
 
+	reports, err := os.OpenFile(path.Join(tmpdir, "reports.log"),
+		os.O_WRONLY | os.O_CREATE | os.O_APPEND, 0644)
+	require.NoError(t, err)
+
 	mender, err := NewMender(config, menderPieces)
 	require.NoError(t, err)
 	controller := menderWithCustomUpdater{
-		mender: *mender,
+		mender: mender,
+		reportWriter: reports,
 	}
 
+	controller.artifactInfoFile = path.Join(tmpdir, "artifact_info")
 	controller.deviceTypeFile = path.Join(tmpdir, "device_type")
 	controller.stateScriptPath = path.Join(tmpdir, "scripts")
 

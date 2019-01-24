@@ -118,10 +118,14 @@ func (d *dualRootfsDeviceImpl) Rollback() error {
 	return nil
 }
 
-func (d *dualRootfsDeviceImpl) PrepareStoreUpdate(artifactHeaders,
+func (d *dualRootfsDeviceImpl) Initialize(artifactHeaders,
 	artifactAugmentedHeaders artifact.HeaderInfoer,
 	payloadHeaders handlers.ArtifactUpdateHeaders) error {
 
+	return nil
+}
+
+func (d *dualRootfsDeviceImpl) PrepareStoreUpdate() error {
 	return nil
 }
 
@@ -292,6 +296,10 @@ func (d *dualRootfsDeviceImpl) Failure() error {
 func (d *dualRootfsDeviceImpl) Cleanup() error {
 	// Nothing to do for rootfs updates.
 	return nil
+}
+
+func (d *dualRootfsDeviceImpl) GetType() string {
+	return "rootfs-image"
 }
 
 func (d *dualRootfsDeviceImpl) NewUpdateStorer(updateType string, payloadNum int) (handlers.UpdateStorer, error) {

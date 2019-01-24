@@ -33,6 +33,8 @@ func (t Transition) IsToError() bool {
 		t == ToArtifactRollbackReboot_Leave
 }
 
+// Transition in and out of state script states. Note in particular that update
+// module specific states are not included here.
 const (
 	// no transition is happening
 	ToNone Transition = iota

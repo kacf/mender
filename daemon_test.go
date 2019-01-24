@@ -60,10 +60,14 @@ func (f fakeDevice) Rollback() error {
 	return f.retRollback
 }
 
-func (f fakeDevice) PrepareStoreUpdate(artifactHeaders,
+func (f fakeDevice) Initialize(artifactHeaders,
 	artifactAugmentedHeaders artifact.HeaderInfoer,
 	payloadHeaders handlers.ArtifactUpdateHeaders) error {
 
+	return nil
+}
+
+func (f fakeDevice) PrepareStoreUpdate() error {
 	return nil
 }
 
@@ -120,6 +124,10 @@ func (f fakeDevice) GetInactive() (string, error) {
 
 func (f fakeDevice) NewUpdateStorer(string, int) (handlers.UpdateStorer, error) {
 	return &f, nil
+}
+
+func (f fakeDevice) GetType() string {
+	return "rootfs-image"
 }
 
 type fakeUpdater struct {

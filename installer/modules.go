@@ -31,19 +31,25 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/mendersoftware/log"
+	"github.com/mendersoftware/mender/store"
 	"github.com/mendersoftware/mender-artifact/artifact"
 	"github.com/mendersoftware/mender-artifact/handlers"
 )
 
 type ModuleInstaller struct {
-	payloadIndex    int
+	// Global configuration variables.
 	modulesPath     string
 	modulesWorkPath string
-	updateType      string
 	programPath     string
 	artifactInfo    ArtifactInfoGetter
 	deviceInfo      DeviceInfoGetter
+	store           store.Store
 
+	// Payload specific variables.
+	payloadIndex    int
+	updateType      string
+
+	// Temporary variables during operation.
 	downloader      *moduleDownload
 	processKiller   *delayKiller
 }
@@ -119,11 +125,13 @@ func (mod *ModuleInstaller) readAndLog(r io.ReadCloser, capture bool) (string, e
 		}
 		line = strings.TrimRight(line, "\n")
 
-		if capture {
-			log.Debugf("Update module output: %s", line)
-			output = output + line
-		} else {
-			log.Infof("Update module output: %s", line)
+		if len(line) > 0 {
+			if capture {
+				log.Debugf("Update module output: %s", line)
+				output = output + line
+			} else {
+				log.Infof("Update module output: %s", line)
+			}
 		}
 
 		if err == io.EOF {
@@ -396,26 +404,17 @@ func (d *moduleDownload) detachedDownloadProcess() {
 	d.status <- err
 }
 
-func (d *moduleDownload) waitForProcessStatus(original error) error {
-	cErr := <-d.cmdErr
-	if cErr != nil {
-		return errors.Wrap(original, cErr.Error())
-	} else {
-		return original
-	}
-}
-
-func (d *moduleDownload) handleCmdErr(err error) (bool, error) {
+func (d *moduleDownload) handleCmdErr(err error) error {
 	d.proc = nil
 	d.cmdErr = nil
 
 	if err != nil {
 		// Command error: Always an error.
-		return false, errors.Wrap(err, "Update module terminated abnormally")
+		return errors.Wrap(err, "Update module terminated abnormally")
 
 	} else if d.finishFlag {
 		// Process terminated, we are done!
-		return true, nil
+		return nil
 
 	} else if d.downloaderType == unknownDownloader {
 
@@ -430,7 +429,7 @@ func (d *moduleDownload) handleCmdErr(err error) (bool, error) {
 
 		err = d.initializeMenderDownload()
 		if err != nil {
-			return false, err
+			return err
 		}
 
 		if d.currentStream != nil {
@@ -444,10 +443,10 @@ func (d *moduleDownload) handleCmdErr(err error) (bool, error) {
 
 	} else if d.downloaderType == moduleDownloader {
 		// Should always get finishFlag before this happens.
-		return false, errors.New("Update module terminated in the middle of the download")
+		return errors.New("Update module terminated in the middle of the download")
 	}
 
-	return false, nil
+	return nil
 }
 
 func (d *moduleDownload) handleNextArtifactStream() error {
@@ -463,7 +462,7 @@ func (d *moduleDownload) handleNextArtifactStream() error {
 		var err error
 		d.streamNext, err = d.publishNameInStreamNext(d.currentStream.name)
 		if err != nil {
-			return d.waitForProcessStatus(err)
+			return err
 		}
 		d.streamNext.startStream()
 	}
@@ -481,7 +480,7 @@ func (d *moduleDownload) handleStreamNextChannel(err error) error {
 	}
 
 	if err != nil {
-		return d.waitForProcessStatus(err)
+		return err
 	}
 
 	if d.downloaderType == unknownDownloader {
@@ -510,7 +509,7 @@ func (d *moduleDownload) handleStreamChannel(err error) error {
 	// Process has finished streaming, give back status.
 	if err != nil {
 		// If error, bail.
-		return d.waitForProcessStatus(err)
+		return err
 	} else {
 		// If successful, stay in loop.
 		d.status <- err
@@ -518,7 +517,7 @@ func (d *moduleDownload) handleStreamChannel(err error) error {
 	}
 }
 
-func (d *moduleDownload) handleFinishChannel() (bool, error) {
+func (d *moduleDownload) handleFinishChannel() error {
 	d.finishFlag = true
 
 	if d.downloaderType != menderDownloader {
@@ -526,17 +525,12 @@ func (d *moduleDownload) handleFinishChannel() (bool, error) {
 		var err error
 		d.streamNext, err = d.publishNameInStreamNext("")
 		if err != nil {
-			return false, d.waitForProcessStatus(err)
+			return err
 		}
 		d.streamNext.startStream()
-
-	} else if d.proc == nil {
-		// Finish has been requested, and the process
-		// has already terminated. We are done.
-		return true, nil
 	}
 
-	return false, nil
+	return nil
 }
 
 // Loop to receive new stream requests and process them. It is essentially an
@@ -583,12 +577,11 @@ func (d *moduleDownload) downloadProcessLoop() error {
 			streamChannel = d.stream.streamStatusChannel()
 		}
 
-		var finished bool
 		var err error
 
 		select {
 		case err = <-d.cmdErr:
-			finished, err = d.handleCmdErr(err)
+			err = d.handleCmdErr(err)
 
 		case d.currentStream = <-d.nextArtifactStream:
 			err = d.handleNextArtifactStream()
@@ -600,13 +593,16 @@ func (d *moduleDownload) downloadProcessLoop() error {
 			err = d.handleStreamChannel(err)
 
 		case <-d.finishChannel:
-			finished, err = d.handleFinishChannel()
+			err = d.handleFinishChannel()
 		}
 
-		if err != nil {
+		if d.finishFlag && d.proc == nil {
+			// Exit loop once we have enabled finishFlag and the
+			// process has terminated.
 			return err
-		} else if finished {
-			return nil
+		} else if err != nil {
+			// Stay in loop if not finished
+			d.status <- err
 		}
 	}
 }
@@ -648,27 +644,24 @@ func (d *moduleDownload) initializeMenderDownload() error {
 	return err
 }
 
-// If this returns any errors, the download should be considered cancelled, and
-// no further functions should be called.
 func (d *moduleDownload) downloadStream(r io.Reader, name string) error {
 	d.nextArtifactStream <- &readerAndNamePair{r, name}
 	err := <-d.status
 	return err
 }
 
-// This function should only be called if downloadStream() did not return any
-// errors, otherwise the program may hang.
+// This function should be called even if downloadStream() returned errors.
 func (d *moduleDownload) finishDownloadProcess() error {
 	d.finishChannel <- true
 	err := <-d.status
 	return err
 }
 
-func (mod *ModuleInstaller) PrepareStoreUpdate(artifactHeaders,
+func (mod *ModuleInstaller) Initialize(artifactHeaders,
 	artifactAugmentedHeaders artifact.HeaderInfoer,
 	payloadHeaders handlers.ArtifactUpdateHeaders) error {
 
-	log.Debug("Executing ModuleInstaller.PrepareStoreUpdate")
+	log.Debug("Executing ModuleInstaller.Initialize")
 
 	if mod.downloader != nil {
 		return errors.New("Internal error: PrepareStoreUpdate() called when download is already active")
@@ -685,6 +678,12 @@ func (mod *ModuleInstaller) PrepareStoreUpdate(artifactHeaders,
 		return err
 	}
 
+	return nil
+}
+
+func (mod *ModuleInstaller) PrepareStoreUpdate() error {
+	log.Debug("Executing ModuleInstaller.PrepareStoreUpdate")
+	log.Infof("Calling module: %s Download", mod.programPath)
 	storeUpdateCmd := exec.Command(mod.programPath, "Download")
 	storeUpdateCmd.Dir = mod.payloadPath()
 	output, err := storeUpdateCmd.StdoutPipe()
@@ -753,8 +752,10 @@ func (mod *ModuleInstaller) NeedsReboot() (bool, error) {
 	if err != nil {
 		return false, err
 	} else if output == "" || output == "No" {
+		log.Info("Module does not need reboot")
 		return false, nil
 	} else if output == "Yes" {
+		log.Info("Module needs reboot")
 		return true, nil
 	} else {
 		return false, fmt.Errorf("Unexpected reply from update module NeedsArtifactReboot query: %s",
@@ -774,8 +775,10 @@ func (mod *ModuleInstaller) SupportsRollback() (bool, error) {
 	if err != nil {
 		return false, err
 	} else if output == "" || output == "No" {
+		log.Info("Module does not support rollback")
 		return false, nil
 	} else if output == "Yes" {
+		log.Info("Module supports rollback")
 		return true, nil
 	} else {
 		return false, fmt.Errorf("Unexpected reply from update module SupportsRollback query: %s",
@@ -824,6 +827,10 @@ func (mod *ModuleInstaller) Cleanup() error {
 	return err
 }
 
+func (mod *ModuleInstaller) GetType() string {
+	return mod.updateType
+}
+
 type ModuleInstallerFactory struct {
 	modulesPath     string
 	modulesWorkPath string
@@ -848,13 +855,13 @@ func (mf *ModuleInstallerFactory) NewUpdateStorer(updateType string, payloadNum 
 	}
 
 	mod := &ModuleInstaller{
-		payloadIndex:     payloadNum,
-		modulesPath:      mf.modulesPath,
-		modulesWorkPath:  mf.modulesWorkPath,
-		updateType:       updateType,
-		programPath:      path.Join(mf.modulesPath, updateType),
-		artifactInfo:     mf.artifactInfo,
-		deviceInfo:       mf.deviceInfo,
+		payloadIndex:    payloadNum,
+		modulesPath:     mf.modulesPath,
+		modulesWorkPath: mf.modulesWorkPath,
+		updateType:      updateType,
+		programPath:     path.Join(mf.modulesPath, updateType),
+		artifactInfo:    mf.artifactInfo,
+		deviceInfo:      mf.deviceInfo,
 	}
 	return mod, nil
 }

@@ -245,7 +245,7 @@ func TestStreamsTree(t *testing.T) {
 	assert.Equal(t, 0, len(dirlist))
 }
 
-func moduleDownloadSetup(t *testing.T, tmpdir, helperArg string) *moduleDownload {
+func moduleDownloadSetup(t *testing.T, tmpdir, helperArg string) (*moduleDownload, *delayKiller) {
 	require.NoError(t, os.MkdirAll(path.Join(tmpdir, "streams"), 0700))
 	require.NoError(t, os.MkdirAll(path.Join(tmpdir, "tmp"), 0700))
 	require.NoError(t, syscall.Mkfifo(path.Join(tmpdir, "stream-next"), 0600))
@@ -256,12 +256,12 @@ func moduleDownloadSetup(t *testing.T, tmpdir, helperArg string) *moduleDownload
 	cmd := exec.Command(path.Join(cwd, "modules_test_helper.sh"), helperArg)
 	cmd.Dir = tmpdir
 	require.NoError(t, cmd.Start())
-	newDelayKiller(cmd.Process, 5 * time.Second, time.Second)
+	delayKiller := newDelayKiller(cmd.Process, 5 * time.Second, time.Second)
 
 	download := newModuleDownload(tmpdir, cmd)
 	go download.detachedDownloadProcess()
 
-	return download
+	return download, delayKiller
 }
 
 type modulesDownloadTestCase struct {
@@ -276,7 +276,7 @@ type modulesDownloadTestCase struct {
 	verifyNotExist   []string
 	remove           []string
 	create           []string
-	downloadErr      error
+	downloadErr      []error
 	finishErr        error
 }
 
@@ -303,7 +303,7 @@ var modulesDownloadTestCases []modulesDownloadTestCase = []modulesDownloadTestCa
 		streamContents: []string{"Test content"},
 		streamNames: []string{"test-name"},
 		verifyNotExist: []string{"files/test-name"},
-		downloadErr: errors.New("Update module terminated abnormally: exit status 1"),
+		downloadErr: []error{errors.New("Update module terminated abnormally: exit status 1")},
 	},
 	modulesDownloadTestCase{
 		testName: "Module download short read of stream-next",
@@ -311,7 +311,7 @@ var modulesDownloadTestCases []modulesDownloadTestCase = []modulesDownloadTestCa
 		streamContents: []string{"Test content"},
 		streamNames: []string{"test-name"},
 		verifyNotExist: []string{"files/test-name"},
-		downloadErr: errors.New("Update module terminated in the middle of the download"),
+		downloadErr: []error{errors.New("Update module terminated in the middle of the download")},
 	},
 	modulesDownloadTestCase{
 		testName: "Module download short read of stream",
@@ -321,7 +321,7 @@ var modulesDownloadTestCases []modulesDownloadTestCase = []modulesDownloadTestCa
 		streamContents: []string{strings.Repeat("0", 10000000)},
 		streamNames: []string{"test-name"},
 		verifyNotExist: []string{"files/test-name"},
-		downloadErr: errors.New("broken pipe"),
+		downloadErr: []error{errors.New("broken pipe")},
 	},
 	modulesDownloadTestCase{
 		testName: "Cannot open stream file",
@@ -330,7 +330,7 @@ var modulesDownloadTestCases []modulesDownloadTestCase = []modulesDownloadTestCa
 		streamNames: []string{"test-name"},
 		verifyNotExist: []string{"files/test-name"},
 		remove: []string{"streams"},
-		downloadErr: errors.New("no such file or directory"),
+		downloadErr: []error{errors.New("no such file or directory")},
 	},
 	modulesDownloadTestCase{
 		testName: "files dir blocked by file",
@@ -338,7 +338,7 @@ var modulesDownloadTestCases []modulesDownloadTestCase = []modulesDownloadTestCa
 		streamContents: []string{"Test content"},
 		streamNames: []string{"test-name"},
 		create: []string{"files"},
-		downloadErr: errors.New("file exists"),
+		downloadErr: []error{errors.New("file exists")},
 	},
 	modulesDownloadTestCase{
 		testName: "Mender download multiple files",
@@ -353,6 +353,47 @@ var modulesDownloadTestCases []modulesDownloadTestCase = []modulesDownloadTestCa
 		streamContents: []string{"Test content", "more content"},
 		streamNames: []string{"test-name", "another-name"},
 		verifyFiles: []string{"tmp/module-downloaded-file0", "tmp/module-downloaded-file1"},
+	},
+	modulesDownloadTestCase{
+		testName: "Module download multiple files, downloads only one",
+		scriptArg: "moduleDownloadOnlyOne",
+		streamContents: []string{"Test content", "more content"},
+		streamNames: []string{"test-name", "another-name"},
+		downloadErr: []error{nil, errors.New("Update module terminated in the middle of the download")},
+	},
+	modulesDownloadTestCase{
+		testName: "Module downloads two entries, but one file",
+		scriptArg: "moduleDownloadTwoEntriesOneFile",
+		streamContents: []string{"Test content", "more content"},
+		streamNames: []string{"test-name", "another-name"},
+		downloadErr: []error{nil, errors.New("Update module terminated in the middle of the download")},
+	},
+	modulesDownloadTestCase{
+		testName: "Module download doesn't read final zero entry",
+		scriptArg: "moduleDownloadNoZeroEntry",
+		streamContents: []string{"Test content"},
+		streamNames: []string{"test-name"},
+	},
+	modulesDownloadTestCase{
+		testName: "Module download fails final exit",
+		scriptArg: "moduleDownloadFailExit",
+		streamContents: []string{"Test content"},
+		streamNames: []string{"test-name"},
+		finishErr: errors.New("Update module terminated abnormally: exit status 1"),
+	},
+	modulesDownloadTestCase{
+		testName: "Module download hangs",
+		scriptArg: "moduleDownloadHang",
+		streamContents: []string{"Test content"},
+		streamNames: []string{"test-name"},
+		downloadErr: []error{errors.New("Update module terminated abnormally: signal: killed")},
+	},
+	modulesDownloadTestCase{
+		testName: "Module download never exits",
+		scriptArg: "moduleDownloadExitHang",
+		streamContents: []string{"Test content"},
+		streamNames: []string{"test-name"},
+		finishErr: errors.New("Update module terminated abnormally: signal: killed"),
 	},
 }
 
@@ -382,7 +423,7 @@ func subTestModulesDownload(t *testing.T, c *modulesDownloadTestCase) {
 
 	goRoutines := runtime.NumGoroutine()
 
-	download := moduleDownloadSetup(t, tmpdir, c.scriptArg)
+	download, delayKiller := moduleDownloadSetup(t, tmpdir, c.scriptArg)
 
 	for _, file := range c.remove {
 		require.NoError(t, os.RemoveAll(path.Join(tmpdir, file)))
@@ -396,13 +437,16 @@ func subTestModulesDownload(t *testing.T, c *modulesDownloadTestCase) {
 	for n := range c.streamContents {
 		buf := bytes.NewBuffer([]byte(c.streamContents[n]))
 		err = download.downloadStream(buf, c.streamNames[n])
-		assertIsError(t, c.downloadErr, err)
+		if n < len(c.downloadErr) {
+			assertIsError(t, c.downloadErr[n], err)
+		} else {
+			assert.NoError(t, err)
+		}
 	}
 
-	if err == nil {
-		err = download.finishDownloadProcess()
-		assertIsError(t, c.finishErr, err)
-	}
+	err = download.finishDownloadProcess()
+	assertIsError(t, c.finishErr, err)
+	delayKiller.Stop()
 
 	for n := range c.verifyFiles {
 		verifyFileContent(t, path.Join(tmpdir, c.verifyFiles[n]), c.streamContents[n])
@@ -415,5 +459,14 @@ func subTestModulesDownload(t *testing.T, c *modulesDownloadTestCase) {
 
 	// Make sure the downloader didn't leak any Go routines.
 	runtime.GC()
-	assert.Equal(t, goRoutines, runtime.NumGoroutine(), "Downloader leaked go routines")
+	ok := false
+	for c := 0; c < 5; c++ {
+		if goRoutines == runtime.NumGoroutine() {
+			ok = true
+			break
+		}
+		// The finalizer may need some CPU time to run.
+		time.Sleep(time.Second)
+	}
+	assert.True(t, ok, "Downloader leaked go routines")
 }

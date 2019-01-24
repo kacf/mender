@@ -366,6 +366,14 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 		}), false
 	}
 
+	// We need to restore our payload handlers.
+	err = c.RestoreInstallersFromTypeList(sd.UpdateInfo.Artifact.PayloadTypes)
+	if err != nil {
+		// Getting an error here is *really* bad. It means that we
+		// cannot recover *anything*. Report big bad failure.
+		return NewUpdateStatusReportState(&sd.UpdateInfo, client.StatusFailure), false
+	}
+
 	log.Infof("handling loaded state: %s", sd.Name)
 
 	// check last known state
@@ -389,8 +397,8 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 			// just log error
 			log.Errorf("failed to enable deployment logger: %s", err)
 		}
-		log.Errorf("got invalid entrypoint into the state machine: state: %v", sd.Name)
-		me := NewFatalError(errors.Errorf("got invalid state stored: %v", sd.Name))
+		log.Errorf("Update was interrupted in state: %s", sd.Name)
+		me := NewFatalError(errors.Errorf("Update was interrupted in state: %s", sd.Name))
 
 		return NewUpdateErrorState(me, &sd.UpdateInfo), false
 	}
@@ -465,10 +473,11 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 		// information, best report an error
 		// this can ONLY happen if the artifact name does not match information
 		// stored in `/etc/mender/artifact_info` file
-		log.Errorf("running with image %v, expected updated image %v",
-			artifactName, uc.Update().ArtifactName())
+		log.Error("TODO: FIX THE artifact_name")
+		// log.Errorf("running with image %v, expected updated image %v",
+		// 	artifactName, uc.Update().ArtifactName())
 
-		return NewRollbackState(uc.Update(), true), false
+		// return NewRollbackState(uc.Update(), true), false
 	}
 
 	// update info and has upgrade flag are there, we're running the new
@@ -501,8 +510,8 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 		log.Errorf("failed to write state-data to storage: %v", err)
 	}
 
-	// update is commited now; report status
-	return NewUpdateStatusReportState(uc.Update(), client.StatusSuccess), false
+	// update is commited now; clean up
+	return NewUpdateCleanupState(uc.Update(), client.StatusSuccess), false
 }
 
 type UpdateCheckState struct {
@@ -624,12 +633,37 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 		return NewUpdateStatusReportState(&u.update, client.StatusFailure), false
 	}
 
-	if err := c.InstallArtifact(u.imagein); err != nil {
-		log.Errorf("update install failed: %s", err)
+	installer, err := c.ReadArtifactHeaders(u.imagein)
+	if err != nil {
+		log.Errorf("Fetching Artifact headers failed: %s", err)
 		return NewFetchStoreRetryState(u, &u.update, err), false
 	}
 
-	for _, i := range c.GetInstallers() {
+	installers := c.GetInstallers()
+	u.update.Artifact.PayloadTypes = make([]string, len(installers))
+	for n, i := range installers {
+		u.update.Artifact.PayloadTypes[n] = i.GetType()
+	}
+
+	// Store state so that all the payload handlers are recorded there. This
+	// is important since they need to call their Cleanup functions after we
+	// have started the download.
+	err = StoreStateData(ctx.store, datastore.StateData{
+		Name: datastore.MenderStateUpdateStore,
+		UpdateInfo: u.update,
+	})
+	if err != nil {
+		log.Error("Could not write state data to persistent storage: ", err.Error())
+		return NewUpdateErrorState(NewTransientError(err), &u.update), false
+	}
+
+	err = installer.StorePayloads()
+	if err != nil {
+		log.Errorf("Artifact install failed: %s", err)
+		return NewUpdateErrorState(NewTransientError(err), &u.update), false
+	}
+
+	for _, i := range installers {
 		supportsRollback, err := i.SupportsRollback()
 		if err != nil {
 			return NewUpdateErrorState(NewTransientError(err), &u.update), false
@@ -645,7 +679,7 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 	}
 
 	// Make sure SupportsRollback status is stored
-	err := StoreStateData(ctx.store, datastore.StateData{
+	err = StoreStateData(ctx.store, datastore.StateData{
 		Name: datastore.MenderStateUpdateStore,
 		UpdateInfo: u.update,
 	})
@@ -662,7 +696,7 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 	// proceeding with already cancelled update
 	merr = c.ReportUpdateStatus(&u.update, client.StatusDownloading)
 	if merr != nil && merr.IsFatal() {
-		return NewUpdateStatusReportState(&u.update, client.StatusFailure), false
+		return NewUpdateErrorState(merr, &u.update), false
 	}
 
 	return NewUpdateInstallState(&u.update), false
@@ -686,7 +720,7 @@ func NewUpdateInstallState(update *datastore.UpdateInfo) State {
 func (is *UpdateInstallState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	// start deployment logging
 	if err := DeploymentLogger.Enable(is.Update().ID); err != nil {
-		return NewUpdateStatusReportState(is.Update(), client.StatusFailure), false
+		return NewUpdateErrorState(NewTransientError(err), is.Update()), false
 	}
 
 	merr := c.ReportUpdateStatus(is.Update(), client.StatusInstalling)
@@ -751,7 +785,9 @@ func (fir *FetchStoreRetryState) Handle(ctx *StateContext, c Controller) (State,
 	intvl, err := client.GetExponentialBackoffTime(ctx.fetchInstallAttempts, c.GetUpdatePollInterval())
 	if err != nil {
 		if fir.err != nil {
-			return NewUpdateStatusReportState(&fir.update, client.StatusFailure), false
+			return NewUpdateErrorState(
+				NewTransientError(errors.Wrap(fir.err, err.Error())),
+				&fir.update), false
 		}
 		return NewUpdateErrorState(
 			NewTransientError(err), &fir.update), false
@@ -892,11 +928,56 @@ func (ue *UpdateErrorState) Handle(ctx *StateContext, c Controller) (State, bool
 
 	log.Debug("handle update error state")
 
-	return NewUpdateStatusReportState(&ue.update, client.StatusFailure), false
+	for _, i := range c.GetInstallers() {
+		err := i.Failure()
+		if err != nil {
+			log.Errorf("ArtifactFailure failed: %s", err.Error())
+		}
+	}
+
+	return NewUpdateCleanupState(&ue.update, client.StatusFailure), false
 }
 
 func (ue *UpdateErrorState) Update() *datastore.UpdateInfo {
 	return &ue.update
+}
+
+type UpdateCleanupState struct {
+	UpdateState
+	status string
+}
+
+func NewUpdateCleanupState(update *datastore.UpdateInfo, status string) State {
+	return &UpdateCleanupState{
+		UpdateState: NewUpdateState(datastore.MenderStateUpdateCleanup,
+			ToNone, update),
+		status: status,
+	}
+}
+
+func (s *UpdateCleanupState) Handle(ctx *StateContext, c Controller) (State, bool) {
+	if err := DeploymentLogger.Enable(s.Update().ID); err != nil {
+		log.Errorf("Can not enable deployment logger: %s", err)
+	}
+
+	log.Debug("Handling Cleanup state")
+
+	var lastError error
+	for _, i := range c.GetInstallers() {
+		err := i.Cleanup()
+		if err != nil {
+			log.Errorf("Cleanup failed: %s", err.Error())
+			lastError = err
+			// Nothing we can do about it though. Just continue.
+		}
+	}
+
+	if lastError != nil {
+		s.status = client.StatusFailure
+	}
+
+	// Cleanup is done, report outcome.
+	return NewUpdateStatusReportState(s.Update(), s.status), false
 }
 
 // Wrapper for mandatory update state reporting. The state handler will attempt

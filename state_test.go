@@ -338,7 +338,6 @@ func TestStateUpdateReportStatus(t *testing.T) {
 	sd, err := LoadStateData(ms)
 	assert.NoError(t, err)
 	assert.Equal(t, *update, sd.UpdateInfo)
-	assert.Equal(t, client.StatusSuccess, sd.UpdateStatus)
 
 	poll := 5 * time.Millisecond
 	retry := 1 * time.Millisecond

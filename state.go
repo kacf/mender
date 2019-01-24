@@ -1050,7 +1050,6 @@ func (usr *UpdateStatusReportState) Handle(ctx *StateContext, c Controller) (Sta
 		if err := StoreStateData(ctx.store, datastore.StateData{
 			Name:         usr.Id(),
 			UpdateInfo:   *usr.Update(),
-			UpdateStatus: usr.status,
 		}); err != nil {
 			log.Errorf("failed to store state data in update status report state: %v",
 				err)

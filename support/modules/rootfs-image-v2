@@ -1,6 +1,6 @@
 #!/bin/sh
 
-set -ex
+set -e
 
 active="$(fw_printenv mender_boot_part)"
 active="${active#mender_boot_part=}"

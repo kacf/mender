@@ -415,9 +415,10 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 
 	// VerifyRollbackReboot must be retried if interrupted, in order to
 	// possibly go back and RollbackReboot again.
-	case datastore.MenderStateRollbackReboot:
-	case datastore.MenderStateVerifyRollbackReboot:
-	case datastore.MenderStateAfterRollbackReboot:
+	case datastore.MenderStateRollbackReboot,
+		datastore.MenderStateVerifyRollbackReboot,
+		datastore.MenderStateAfterRollbackReboot:
+
 		return NewUpdateVerifyRollbackRebootState(&sd.UpdateInfo), false
 
 	// Rerun commit-leave
@@ -441,9 +442,6 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 			return NewUpdateErrorState(me, &sd.UpdateInfo), false
 		}
 	}
-
-	// Impossible to get here, but Go doesn't understand that.
-	return nil, false
 }
 
 type AuthorizeWaitState struct {

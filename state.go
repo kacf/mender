@@ -15,6 +15,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"time"
@@ -372,8 +373,19 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 		// just log error
 		log.Errorf("failed to enable deployment logger: %s", err)
 	}
-	log.Errorf("Update was interrupted in state: %s", sd.Name)
-	me := NewFatalError(errors.Errorf("Update was interrupted in state: %s", sd.Name))
+
+	msg := fmt.Sprintf("Update was interrupted in state: %s", sd.Name)
+	switch sd.Name {
+	case datastore.MenderStateReboot:
+	case datastore.MenderStateRollbackReboot:
+		// Interruption is expected in these, don't produce error.
+		log.Info(msg)
+	default:
+		log.Error(msg)
+	}
+
+	// Used in some cases below. Doesn't mean that there must be an error.
+	me := NewFatalError(errors.New(msg))
 
 	if sd.UpdateInfo.StateDataStoreCount >= maximumStateDataStoreCount {
 		log.Error("State loop detected, breaking out")
@@ -705,6 +717,7 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 	for _, i := range installers {
 		supportsRollback, err := i.SupportsRollback()
 		if err != nil {
+			log.Errorf("Could not determine if module supports rollback: %s", err.Error())
 			return NewUpdateErrorState(NewTransientError(err), &u.update), false
 		}
 		if supportsRollback {
@@ -713,6 +726,7 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 			err = u.update.SupportsRollback.Set(datastore.RollbackNotSupported)
 		}
 		if err != nil {
+			log.Errorf("Could update module rollback support status: %s", err.Error())
 			return NewUpdateErrorState(NewTransientError(err), &u.update), false
 		}
 	}

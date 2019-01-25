@@ -82,11 +82,16 @@ func (k *delayKiller) Stop() {
 }
 
 func (mod *ModuleInstaller) callModule(state string, capture bool) (string, error) {
-	log.Infof("Calling module: %s %s", mod.programPath, state)
-	cmd := exec.Command(mod.programPath, state)
+	payloadPath := mod.payloadPath()
+
+	log.Infof("Calling module: %s %s %s", mod.programPath, state, payloadPath)
+	cmd := exec.Command(mod.programPath, state, payloadPath)
 	cmd.Dir = mod.payloadPath()
-	outputPipe, err := cmd.StdoutPipe()
-	cmd.Stderr = cmd.Stdout
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		return "", err
 	}
@@ -97,10 +102,15 @@ func (mod *ModuleInstaller) callModule(state string, capture bool) (string, erro
 	}
 
 	log.Errorln("TODO, FIX THIS INTERVAL")
-	killer := newDelayKiller(cmd.Process, 5 * time.Second, 2 * 5 * time.Second)
+	killer := newDelayKiller(cmd.Process, 2 * time.Minute, 3 * time.Minute)
 	defer killer.Stop()
 
-	output, err := mod.readAndLog(outputPipe, capture)
+	// Log stderr in background.
+	go mod.readAndLog(stderrPipe, false)
+
+	// Log stdout in foreground. Both should get their pipes closed
+	// simultaneously.
+	output, err := mod.readAndLog(stdoutPipe, capture)
 	if err != nil {
 		return output, err
 	}
@@ -683,21 +693,25 @@ func (mod *ModuleInstaller) Initialize(artifactHeaders,
 
 func (mod *ModuleInstaller) PrepareStoreUpdate() error {
 	log.Debug("Executing ModuleInstaller.PrepareStoreUpdate")
-	log.Infof("Calling module: %s Download", mod.programPath)
-	storeUpdateCmd := exec.Command(mod.programPath, "Download")
+
+	payloadPath := mod.payloadPath()
+
+	log.Infof("Calling module: %s Download %s", mod.programPath, payloadPath)
+	storeUpdateCmd := exec.Command(mod.programPath, "Download", payloadPath)
 	storeUpdateCmd.Dir = mod.payloadPath()
-	output, err := storeUpdateCmd.StdoutPipe()
+	stdout, err := storeUpdateCmd.StdoutPipe()
 	if err != nil {
 		return err
 	}
-	storeUpdateCmd.Stderr = storeUpdateCmd.Stdout
+	stderr, err := storeUpdateCmd.StderrPipe()
+	if err != nil {
+		return err
+	}
 
-	go func() {
-		_, err := mod.readAndLog(output, false)
-		if err != nil {
-			log.Error(err.Error())
-		}
-	}()
+	// Log stdout and stderr in the background. Both should get their pipes
+	// closed simultaneously.
+	go mod.readAndLog(stdout, false)
+	go mod.readAndLog(stderr, false)
 
 	err = storeUpdateCmd.Start()
 	if err != nil {
@@ -706,7 +720,7 @@ func (mod *ModuleInstaller) PrepareStoreUpdate() error {
 	}
 
 	log.Error("TODO: FIX TIMER HERE!")
-	mod.processKiller = newDelayKiller(storeUpdateCmd.Process, 5 * time.Second, 5 * time.Second)
+	mod.processKiller = newDelayKiller(storeUpdateCmd.Process, 2 * time.Minute, 3 * time.Minute)
 	mod.downloader = newModuleDownload(mod.payloadPath(), storeUpdateCmd)
 
 	go mod.downloader.detachedDownloadProcess()
@@ -823,8 +837,28 @@ func (mod *ModuleInstaller) Failure() error {
 
 func (mod *ModuleInstaller) Cleanup() error {
 	log.Debug("Executing ModuleInstaller.Cleanup")
-	_, err := mod.callModule("Cleanup", false)
-	return err
+
+	payloadPath := mod.payloadPath()
+
+	// Prevent calling cleanup if the directory is already gone. Presumably
+	// it means that we already executed this, but spontaneously rebooted
+	// before we had time to finish everything. But if the tree is gone, it
+	// definitely executed the script first.
+	_, err := os.Stat(payloadPath)
+	if err != nil {
+		log.Infof("Could not access %s, assuming cleanup already done: %s",
+			payloadPath, err.Error())
+		return nil
+	}
+
+	_, modErr := mod.callModule("Cleanup", false)
+
+	err = os.RemoveAll(payloadPath)
+	if err != nil {
+		log.Errorf("Error during cleanup of module working directory: %s", err)
+	}
+
+	return modErr
 }
 
 func (mod *ModuleInstaller) GetType() string {

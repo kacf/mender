@@ -214,7 +214,6 @@ type State interface {
 }
 
 type WaitState interface {
-	State
 	Wake() bool
 	Wait(next, same State, wait time.Duration) (State, bool)
 }
@@ -436,12 +435,17 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 }
 
 type AuthorizeWaitState struct {
-	*waitState
+	baseState
+	WaitState
 }
 
 func NewAuthorizeWaitState() State {
 	return &AuthorizeWaitState{
-		waitState: NewWaitState(datastore.MenderStateAuthorizeWait, ToIdle),
+		baseState: baseState{
+			id: datastore.MenderStateAuthorizeWait,
+			t: ToIdle,
+		},
+		WaitState: NewWaitState(datastore.MenderStateAuthorizeWait, ToIdle),
 	}
 }
 
@@ -794,11 +798,16 @@ func (is *UpdateInstallState) Handle(ctx *StateContext, c Controller) (State, bo
 		return is.HandleError(ctx, c, NewTransientError(err))
 	}
 
-	return NewUpdateRebootState(is.Update()), false
+	if is.Update().RebootRequested {
+		return NewUpdateRebootState(is.Update()), false
+	} else {
+		return NewUpdateCommitState(is.Update()), false
+	}
 }
 
 type FetchStoreRetryState struct {
-	*waitState
+	baseState
+	WaitState
 	from   State
 	update datastore.UpdateInfo
 	err    error
@@ -807,7 +816,11 @@ type FetchStoreRetryState struct {
 func NewFetchStoreRetryState(from State, update *datastore.UpdateInfo,
 	err error) State {
 	return &FetchStoreRetryState{
-		waitState: NewWaitState(datastore.MenderStateFetchStoreRetryWait, ToDownload),
+		baseState: baseState{
+			id: datastore.MenderStateFetchStoreRetryWait,
+			t: ToDownload,
+		},
+		WaitState: NewWaitState(datastore.MenderStateFetchStoreRetryWait, ToDownload),
 		from:      from,
 		update:    *update,
 		err:       err,
@@ -835,12 +848,17 @@ func (fir *FetchStoreRetryState) Handle(ctx *StateContext, c Controller) (State,
 }
 
 type CheckWaitState struct {
-	*waitState
+	baseState
+	WaitState
 }
 
 func NewCheckWaitState() State {
 	return &CheckWaitState{
-		waitState: NewWaitState(datastore.MenderStateCheckWait, ToIdle),
+		baseState: baseState{
+			id: datastore.MenderStateCheckWait,
+			t: ToIdle,
+		},
+		WaitState: NewWaitState(datastore.MenderStateCheckWait, ToIdle),
 	}
 }
 
@@ -1115,7 +1133,8 @@ func (usr *UpdateStatusReportState) HandleError(ctx *StateContext, c Controller,
 }
 
 type UpdateStatusReportRetryState struct {
-	*waitState
+	baseState
+	WaitState
 	reportState  State
 	update       datastore.UpdateInfo
 	status       string
@@ -1125,7 +1144,11 @@ type UpdateStatusReportRetryState struct {
 func NewUpdateStatusReportRetryState(reportState State,
 	update *datastore.UpdateInfo, status string, tries int) State {
 	return &UpdateStatusReportRetryState{
-		waitState:    NewWaitState(datastore.MenderStatusReportRetryState, ToNone),
+		baseState: baseState{
+			id: datastore.MenderStatusReportRetryState,
+			t: ToNone,
+		},
+		WaitState:    NewWaitState(datastore.MenderStatusReportRetryState, ToNone),
 		reportState:  reportState,
 		update:       *update,
 		status:       status,
@@ -1476,6 +1499,9 @@ func LoadStateData(store store.Store) (datastore.StateData, error) {
 
 	switch sd.Version {
 	case 0, 1:
+		// TODO: Fix this.
+		return sd, nil
+	case 2:
 		return sd, nil
 	default:
 		return datastore.StateData{}, errors.New("unsupported state data version")

@@ -629,8 +629,6 @@ func transitionState(to State, ctx *StateContext, c Controller) (State, bool) {
 		}
 	}
 
-	panic("Do database stuff here")
-
 	if shouldTransit(from, to) {
 		if to.Transition().IsToError() && !from.Transition().IsToError() {
 			log.Debug("transitioning to error state")

@@ -958,7 +958,7 @@ func TestStateReboot(t *testing.T) {
 	update := &datastore.UpdateInfo{
 		ID: "foo",
 	}
-	rs := NewRebootState(update)
+	rs := NewUpdateRebootState(update)
 
 	// create directory for storing deployments logs
 	tempDir, _ := ioutil.TempDir("", "logs")
@@ -1002,7 +1002,7 @@ func TestStateRollback(t *testing.T) {
 	update := &datastore.UpdateInfo{
 		ID: "foo",
 	}
-	rs := NewUpdateRollbackState(update, false)
+	rs := NewUpdateRollbackState(update)
 
 	// create directory for storing deployments logs
 	tempDir, _ := ioutil.TempDir("", "logs")
@@ -1180,15 +1180,26 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			&UpdateStoreState{},
 			&UpdateInstallState{},
 			&UpdateCommitState{},
+			&UpdateAfterCommitState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
 		},
 		artifactStateChain: []string{
 			"Download",
 			"SupportsRollback",
 			"ArtifactInstall",
+			"NeedsArtifactReboot",
 			"ArtifactCommit",
 			"Cleanup",
 		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"success",
+		},
 		rollbackDisabled: true,
+		rebootDisabled: true,
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
@@ -1197,9 +1208,11 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			&UpdateFetchState{},
 			&UpdateStoreState{},
 			&UpdateInstallState{},
-			&RebootState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
 			&UpdateAfterRebootState{},
 			&UpdateCommitState{},
+			&UpdateAfterCommitState{},
 			&UpdateCleanupState{},
 			&UpdateStatusReportState{},
 			&IdleState{},
@@ -1221,7 +1234,6 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			"success",
 		},
 		rollbackDisabled: true,
-		rebootDisabled: true,
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{

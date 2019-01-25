@@ -38,6 +38,10 @@ func (s *testState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	return s.next, false
 }
 
+func (s *testState) HandleError(ctx *StateContext, c Controller, merr menderError) (State, bool) {
+	return nil, false
+}
+
 func (s *testState) Cancel() bool { return true }
 
 func (s *testState) Id() datastore.MenderState { return datastore.MenderStateInit }
@@ -247,7 +251,7 @@ func TestIgnoreErrors(t *testing.T) {
 	assert.NoError(t, err)
 
 	e = checkIgnoreErrorsExecutor{false}
-	tr = ToArtifactCommit
+	tr = ToArtifactCommit_Leave
 	err = tr.Enter(&e, nil, nil)
 	assert.NoError(t, err)
 
@@ -335,11 +339,11 @@ func TestTransitionReporting(t *testing.T) {
 			expected: true,
 		},
 		{
-			state:    NewRebootState(update),
+			state:    NewUpdateRebootState(update),
 			expected: true,
 		},
 		{
-			state:    NewAfterRebootState(update),
+			state:    NewUpdateAfterRebootState(update),
 			expected: true,
 		},
 		{
@@ -347,11 +351,11 @@ func TestTransitionReporting(t *testing.T) {
 			expected: true,
 		},
 		{
-			state:    NewRollbackState(update, false),
+			state:    NewUpdateRollbackState(update),
 			expected: true,
 		},
 		{
-			state:    NewAfterRollbackRebootState(update),
+			state:    NewUpdateAfterRollbackRebootState(update),
 			expected: true,
 		},
 		{

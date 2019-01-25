@@ -472,8 +472,8 @@ func TestStateInit(t *testing.T) {
 			retHasUpdate: true,
 		},
 	})
-	assert.IsType(t, &AfterRebootState{}, s)
-	uvs := s.(*AfterRebootState)
+	assert.IsType(t, &UpdateAfterRebootState{}, s)
+	uvs := s.(*UpdateAfterRebootState)
 	assert.Equal(t, *update, *uvs.Update())
 	assert.False(t, c)
 
@@ -510,7 +510,7 @@ func TestStateInit(t *testing.T) {
 	s, c = i.Handle(&ctx, ctrl)
 	assert.IsType(t, &IdleState{}, s)
 	assert.False(t, c)
-	assert.IsType(t, ToArtifactCommit, ctrl.GetCurrentState().Transition())
+	assert.IsType(t, ToArtifactCommit_Enter, ctrl.GetCurrentState().Transition())
 
 }
 
@@ -614,9 +614,9 @@ func TestStateUpdateCommit(t *testing.T) {
 	// commit without errors
 	sc := &stateTestController{}
 	s, c = cs.Handle(&ctx, sc)
-	assert.IsType(t, &RollbackState{}, s)
+	assert.IsType(t, &UpdateRollbackState{}, s)
 	assert.False(t, c)
-	usr, _ := s.(*RollbackState)
+	usr, _ := s.(*UpdateRollbackState)
 	assert.Equal(t, *update, *usr.Update())
 
 	s, c = cs.Handle(&ctx, &stateTestController{
@@ -624,9 +624,9 @@ func TestStateUpdateCommit(t *testing.T) {
 			retCommit: NewFatalError(errors.New("commit fail")),
 		},
 	})
-	assert.IsType(t, s, &RollbackState{})
+	assert.IsType(t, s, &UpdateRollbackState{})
 	assert.False(t, c)
-	rs, _ := s.(*RollbackState)
+	rs, _ := s.(*UpdateRollbackState)
 	assert.Equal(t, *update, *rs.Update())
 }
 
@@ -970,7 +970,7 @@ func TestStateReboot(t *testing.T) {
 		fakeDevice: fakeDevice{
 			retReboot: NewFatalError(errors.New("reboot failed")),
 		}})
-	assert.IsType(t, &RollbackState{}, s)
+	assert.IsType(t, &UpdateRollbackState{}, s)
 	assert.False(t, c)
 
 	sc := &stateTestController{
@@ -979,7 +979,7 @@ func TestStateReboot(t *testing.T) {
 		},
 	}
 	s, c = rs.Handle(&ctx, sc)
-	assert.IsType(t, &AfterRebootState{}, s)
+	assert.IsType(t, &UpdateAfterRebootState{}, s)
 	assert.False(t, c)
 	assert.Equal(t, client.StatusRebooting, sc.reportStatus)
 	// reboot will be performed regardless of failures to write update state data
@@ -995,14 +995,14 @@ func TestStateReboot(t *testing.T) {
 		},
 	}
 	s, c = rs.Handle(&ctx, sc)
-	assert.IsType(t, &RollbackState{}, s)
+	assert.IsType(t, &UpdateRollbackState{}, s)
 }
 
 func TestStateRollback(t *testing.T) {
 	update := &datastore.UpdateInfo{
 		ID: "foo",
 	}
-	rs := NewRollbackState(update, false)
+	rs := NewUpdateRollbackState(update, false)
 
 	// create directory for storing deployments logs
 	tempDir, _ := ioutil.TempDir("", "logs")
@@ -1078,7 +1078,7 @@ func TestStateReportError(t *testing.T) {
 	// rollback happens next
 	res := NewReportErrorState(update, client.StatusSuccess)
 	s, c := res.Handle(ctx, sc)
-	assert.IsType(t, &RollbackState{}, s)
+	assert.IsType(t, &UpdateRollbackState{}, s)
 	assert.False(t, c)
 
 	// store some state data, failing to report status with a failed update
@@ -1198,7 +1198,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			&UpdateStoreState{},
 			&UpdateInstallState{},
 			&RebootState{},
-			&AfterRebootState{},
+			&UpdateAfterRebootState{},
 			&UpdateCommitState{},
 			&UpdateCleanupState{},
 			&UpdateStatusReportState{},
@@ -1222,6 +1222,48 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 		},
 		rollbackDisabled: true,
 		rebootDisabled: true,
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Error in download state, no rollback",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"failure",
+		},
+		errorStates: []string{"Download"},
+		rollbackDisabled: true,
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Killed in download state, no rollback",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"failure",
+		},
+		spontRebootStates: []string{"Download"},
+		rollbackDisabled: true,
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{

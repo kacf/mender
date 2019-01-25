@@ -589,43 +589,6 @@ func shouldTransit(from, to State) bool {
 	return from.Transition() != to.Transition()
 }
 
-func TransitionError(s State, action string) State {
-	me := NewTransientError(errors.New("error executing state script"))
-	log.Errorf("will transit to error state from: %s [%s]",
-		s.Id().String(), s.Transition().String())
-	switch t := s.(type) {
-	case *UpdateFetchState:
-		new := NewUpdateStatusReportState(&t.update, client.StatusFailure)
-		new.SetTransition(ToError)
-		return new
-	case *UpdateStoreState:
-		if action == "Leave" {
-			new := NewUpdateStatusReportState(&t.update, client.StatusFailure)
-			new.SetTransition(ToError)
-			return new
-		}
-		return NewUpdateErrorState(me, &t.update)
-	case *UpdateInstallState:
-		return NewRollbackState(t.Update(), false)
-	case *RebootState:
-		return NewRollbackState(t.Update(), false)
-	case *AfterRebootState:
-		return NewRollbackState(t.Update(), true)
-	case *UpdateCommitState:
-		return NewRollbackState(t.Update(), true)
-	case *RollbackState:
-		if t.reboot {
-			return NewRollbackRebootState(t.Update())
-		}
-		return NewUpdateErrorState(me, t.Update())
-	case *RollbackRebootState:
-		NewUpdateErrorState(me, t.Update())
-	default:
-		return NewErrorState(me)
-	}
-	return NewErrorState(me)
-}
-
 func shouldReportUpdateStatus(state datastore.MenderState) bool {
 	return StateStatus(state) != ""
 }
@@ -666,6 +629,8 @@ func transitionState(to State, ctx *StateContext, c Controller) (State, bool) {
 		}
 	}
 
+	panic("Do database stuff here")
+
 	if shouldTransit(from, to) {
 		if to.Transition().IsToError() && !from.Transition().IsToError() {
 			log.Debug("transitioning to error state")
@@ -681,21 +646,36 @@ func transitionState(to State, ctx *StateContext, c Controller) (State, bool) {
 		} else {
 			// do transition to ordinary state
 			if err := from.Transition().Leave(c.GetScriptExecutor(), report, ctx.store); err != nil {
-				log.Errorf("error executing leave script for %s state: %v", from.Id(), err)
-				return TransitionError(from, "Leave"), false
+				merr := NewTransientError(fmt.Errorf(
+					"error executing leave script for %s state: %s",
+					from.Id(), err.Error()))
+				return from.HandleError(ctx, c, merr)
 			}
-		}
-
-		c.SetNextState(to)
-
-		if err := to.Transition().Enter(c.GetScriptExecutor(), report, ctx.store); err != nil {
-			log.Errorf("error calling enter script for (error) %s state: %v", to.Id(), err)
-			// we have not entered to state; so handle from state error
-			return TransitionError(from, "Enter"), false
 		}
 	}
 
 	c.SetNextState(to)
+
+	// If this is an update state, store new state in database.
+	if us, ok := to.(UpdateState); ok {
+		err := StoreStateData(ctx.store, datastore.StateData{
+			Name: us.Id(),
+			UpdateInfo: *us.Update(),
+		})
+		if err != nil {
+			log.Error("Could not write state data to persistent storage: ", err.Error())
+			return us.HandleError(ctx, c, NewFatalError(err))
+		}
+	}
+
+	if shouldTransit(from, to) {
+		if err := to.Transition().Enter(c.GetScriptExecutor(), report, ctx.store); err != nil {
+			merr := NewTransientError(fmt.Errorf(
+				"error calling enter script for (error) %s state: %s",
+				to.Id(), err.Error()))
+			return to.HandleError(ctx, c, merr)
+		}
+	}
 
 	// execute current state action
 	return to.Handle(ctx, c)

@@ -36,12 +36,10 @@ type StateData struct {
 
 // current version of the format of StateData;
 // incerease the version number once the format of StateData is changed
-const StateDataVersion = 1
+const StateDataVersion = 2
 
 type MenderState int
 
-// Do not change the order or remove any of these constants, since they are
-// stored in the database. Only add to the end.
 const (
 	// initial state
 	MenderStateInit MenderState = iota
@@ -70,6 +68,8 @@ const (
 	MenderStateUpdateVerify
 	// commit needed
 	MenderStateUpdateCommit
+	// commit is finished
+	MenderStateUpdateAfterCommit
 	// status report
 	MenderStateUpdateStatusReport
 	// wait before retrying sending either report or deployment logs
@@ -79,49 +79,57 @@ const (
 	// reboot
 	MenderStateReboot
 	// first state after booting device after rollback reboot
+	MenderStateVerifyReboot
+	// state which runs the ArtifactReboot_Leave scripts
 	MenderStateAfterReboot
-	//rollback
+	// rollback
 	MenderStateRollback
 	// reboot after rollback
 	MenderStateRollbackReboot
 	// first state after booting device after rollback reboot
+	MenderStateVerifyRollbackReboot
+	// state which runs ArtifactRollbackReboot_Leave scripts
 	MenderStateAfterRollbackReboot
 	// error
 	MenderStateError
 	// update error
 	MenderStateUpdateError
-	// exit state
-	MenderStateDone
 	// cleanup state
 	MenderStateUpdateCleanup
+	// exit state
+	MenderStateDone
 )
 
 var (
 	stateNames = map[MenderState]string{
-		MenderStateInit:                "init",
-		MenderStateIdle:                "idle",
-		MenderStateAuthorize:           "authorize",
-		MenderStateAuthorizeWait:       "authorize-wait",
-		MenderStateInventoryUpdate:     "inventory-update",
-		MenderStateCheckWait:           "check-wait",
-		MenderStateUpdateCheck:         "update-check",
-		MenderStateUpdateFetch:         "update-fetch",
-		MenderStateUpdateStore:         "update-store",
-		MenderStateUpdateInstall:       "update-install",
-		MenderStateFetchStoreRetryWait: "fetch-install-retry-wait",
-		MenderStateUpdateVerify:        "update-verify",
-		MenderStateUpdateCommit:        "update-commit",
-		MenderStateUpdateStatusReport:  "update-status-report",
-		MenderStatusReportRetryState:   "update-retry-report",
-		MenderStateReportStatusError:   "status-report-error",
-		MenderStateReboot:              "reboot",
-		MenderStateAfterReboot:         "after-reboot",
-		MenderStateRollback:            "rollback",
-		MenderStateRollbackReboot:      "rollback-reboot",
-		MenderStateAfterRollbackReboot: "after-rollback-reboot",
-		MenderStateError:               "error",
-		MenderStateUpdateError:         "update-error",
-		MenderStateDone:                "finished",
+		MenderStateInit:                 "init",
+		MenderStateIdle:                 "idle",
+		MenderStateAuthorize:            "authorize",
+		MenderStateAuthorizeWait:        "authorize-wait",
+		MenderStateInventoryUpdate:      "inventory-update",
+		MenderStateCheckWait:            "check-wait",
+		MenderStateUpdateCheck:          "update-check",
+		MenderStateUpdateFetch:          "update-fetch",
+		MenderStateUpdateStore:          "update-store",
+		MenderStateUpdateInstall:        "update-install",
+		MenderStateFetchStoreRetryWait:  "fetch-install-retry-wait",
+		MenderStateUpdateVerify:         "update-verify",
+		MenderStateUpdateCommit:         "update-commit",
+		MenderStateUpdateAfterCommit:    "update-after-commit",
+		MenderStateUpdateStatusReport:   "update-status-report",
+		MenderStatusReportRetryState:    "update-retry-report",
+		MenderStateReportStatusError:    "status-report-error",
+		MenderStateReboot:               "reboot",
+		MenderStateVerifyReboot:         "verify-reboot",
+		MenderStateAfterReboot:          "after-reboot",
+		MenderStateRollback:             "rollback",
+		MenderStateRollbackReboot:       "rollback-reboot",
+		MenderStateVerifyRollbackReboot: "verify-rollback-reboot",
+		MenderStateAfterRollbackReboot:  "after-rollback-reboot",
+		MenderStateError:                "error",
+		MenderStateUpdateError:          "update-error",
+		MenderStateUpdateCleanup:        "cleanup",
+		MenderStateDone:                 "finished",
 	}
 )
 
@@ -184,6 +192,10 @@ type UpdateInfo struct {
 	RebootRequested bool
 	// Whether the currently running update supports rollback.
 	SupportsRollback SupportsRollbackType
+	// How many times this update's state has been stored. This is roughly,
+	// but not exactly, equivalent to the number of state transitions, and
+	// is used to break out of loops.
+	StateDataStoreCount int
 }
 
 func (ur *UpdateInfo) CompatibleDevices() []string {

@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/mendersoftware/mender/client"
-	"github.com/mendersoftware/mender/datastore"
 	"github.com/mendersoftware/mender/statescript"
 	"github.com/mendersoftware/mender/store"
 	"github.com/pkg/errors"
@@ -48,7 +47,8 @@ const (
 	ToArtifactReboot_Enter
 	// should have Leave action only
 	ToArtifactReboot_Leave
-	ToArtifactCommit
+	ToArtifactCommit_Enter
+	ToArtifactCommit_Leave
 	ToArtifactRollback
 	// should have Enter and Error actions
 	ToArtifactRollbackReboot_Enter
@@ -67,7 +67,8 @@ var (
 		ToArtifactInstall:              "ArtifactInstall",
 		ToArtifactReboot_Enter:         "ArtifactReboot_Enter",
 		ToArtifactReboot_Leave:         "ArtifactReboot_Leave",
-		ToArtifactCommit:               "ArtifactCommit",
+		ToArtifactCommit_Enter:         "ArtifactCommit_Enter",
+		ToArtifactCommit_Leave:         "ArtifactCommit_Leave",
 		ToArtifactRollback:             "ArtifactRollback",
 		ToArtifactRollbackReboot_Enter: "ArtifactRollbackReboot_Enter",
 		ToArtifactRollbackReboot_Leave: "ArtifactRollbackReboot_Leave",
@@ -88,7 +89,7 @@ func ignoreErrors(t Transition, action string) bool {
 		t == ToArtifactRollbackReboot_Leave ||
 		t == ToArtifactFailure ||
 		// for now just ignore ArtifactCommit.Leave errors
-		(t == ToArtifactCommit && action == "Leave")
+		t == ToArtifactCommit_Leave
 }
 
 // Transition implements statescript.Launcher interface
@@ -100,19 +101,6 @@ func (t Transition) Enter(exec statescript.Executor, report *client.StatusReport
 	name := getName(t, "Enter")
 	if name == "" {
 		return nil
-	}
-	if t == ToArtifactReboot_Enter {
-		// Store reboot-state here, so that a powerloss in reboot-enter
-		// will not cause the client to reboot back into the old partition.
-		sd, err := LoadStateData(store)
-		if err != nil {
-			return errors.Wrap(err, "ArtifactRollbackReboot_Enter: ")
-		}
-		sd.Name = datastore.MenderStateReboot
-		err = StoreStateData(store, sd)
-		if err != nil {
-			return errors.Wrap(err, "ArtifactRollbackReboot_Enter: failed to store state-data. ")
-		}
 	}
 
 	if err := exec.ExecuteAll(name, "Enter", ignoreErrors(t, "Enter"), report); err != nil {

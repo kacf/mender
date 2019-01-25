@@ -203,6 +203,7 @@ type State interface {
 	// Perform state action, returns next state and boolean flag indicating if
 	// execution was cancelled or not
 	Handle(ctx *StateContext, c Controller) (State, bool)
+	HandleError(ctx *StateContext, c Controller, err menderError) (State, bool)
 	// Cancel state action, returns true if action was cancelled
 	Cancel() bool
 	// Return numeric state ID
@@ -213,20 +214,14 @@ type State interface {
 }
 
 type WaitState interface {
-	Id() datastore.MenderState
+	State
 	Wake() bool
-	Cancel() bool
 	Wait(next, same State, wait time.Duration) (State, bool)
-	Transition() Transition
-	SetTransition(t Transition)
 }
 
 type UpdateState interface {
-	Id() datastore.MenderState
-	Cancel() bool
+	State
 	Update() *datastore.UpdateInfo
-	Transition() Transition
-	SetTransition(t Transition)
 }
 
 // baseState is a helper state with some convenience methods
@@ -255,13 +250,18 @@ func (b *baseState) String() string {
 	return b.id.String()
 }
 
+func (b *baseState) HandleError(ctx *StateContext, c Controller, err menderError) (State, bool) {
+	log.Error(err.Error())
+	return NewErrorState(err), false
+}
+
 type waitState struct {
 	baseState
 	cancel chan bool
 	wakeup chan bool
 }
 
-func NewWaitState(id datastore.MenderState, t Transition) WaitState {
+func NewWaitState(id datastore.MenderState, t Transition) *waitState {
 	return &waitState{
 		baseState: baseState{id: id, t: t},
 		cancel:    make(chan bool),
@@ -304,7 +304,7 @@ type updateState struct {
 	update datastore.UpdateInfo
 }
 
-func NewUpdateState(id datastore.MenderState, t Transition, u *datastore.UpdateInfo) UpdateState {
+func NewUpdateState(id datastore.MenderState, t Transition, u *datastore.UpdateInfo) *updateState {
 	return &updateState{
 		baseState: baseState{id: id, t: t},
 		update:    *u,
@@ -313,6 +313,17 @@ func NewUpdateState(id datastore.MenderState, t Transition, u *datastore.UpdateI
 
 func (us *updateState) Update() *datastore.UpdateInfo {
 	return &us.update
+}
+
+func (us *updateState) HandleError(ctx *StateContext, c Controller, err menderError) (State, bool) {
+	log.Error(err.Error())
+
+	// Default for most update states. Some states will override this.
+	if us.Update().SupportsRollback == datastore.RollbackSupported {
+		return NewUpdateRollbackState(us.Update()), false
+	} else {
+		return NewUpdateErrorState(err, us.Update()), false
+	}
 }
 
 type IdleState struct {
@@ -337,16 +348,6 @@ type InitState struct {
 	baseState
 }
 
-func handleRebooted(updateInfo *datastore.UpdateInfo, c Controller) (State, bool) {
-	for _, i := range c.GetInstallers() {
-		err := i.VerifyReboot()
-		if err != nil {
-			return NewRollbackState(updateInfo, true), false
-		}
-	}
-	return NewAfterRebootState(updateInfo), false
-}
-
 func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	// restore previous state information
 	sd, err := LoadStateData(ctx.store)
@@ -366,6 +367,20 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 		}), false
 	}
 
+	log.Infof("handling loaded state: %s", sd.Name)
+
+	if err := DeploymentLogger.Enable(sd.UpdateInfo.ID); err != nil {
+		// just log error
+		log.Errorf("failed to enable deployment logger: %s", err)
+	}
+	log.Errorf("Update was interrupted in state: %s", sd.Name)
+	me := NewFatalError(errors.Errorf("Update was interrupted in state: %s", sd.Name))
+
+	if sd.UpdateInfo.StateDataStoreCount >= maximumStateDataStoreCount {
+		log.Error("State loop detected, breaking out")
+		return NewUpdateStatusReportState(&sd.UpdateInfo, client.StatusFailure), false
+	}
+
 	// We need to restore our payload handlers.
 	err = c.RestoreInstallersFromTypeList(sd.UpdateInfo.Artifact.PayloadTypes)
 	if err != nil {
@@ -374,43 +389,59 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 		return NewUpdateStatusReportState(&sd.UpdateInfo, client.StatusFailure), false
 	}
 
-	log.Infof("handling loaded state: %s", sd.Name)
-
 	// check last known state
 	switch sd.Name {
 
-	case datastore.MenderStateReboot:
-		// After reboot into new update.
-		return handleRebooted(&sd.UpdateInfo, c)
+	// Go straight to cleanup if we rebooted from Download state. This is
+	// important so that artifact scripts from that state do not get to run,
+	// since they have not yet been signature checked.
+	case datastore.MenderStateUpdateStore:
+		return NewUpdateCleanupState(&sd.UpdateInfo, client.StatusFailure), false
 
+	// After reboot into new update.
+	case datastore.MenderStateReboot:
+		return NewUpdateVerifyRebootState(&sd.UpdateInfo), false
+
+	// VerifyRollbackReboot must be retried if interrupted, in order to
+	// possibly go back and RollbackReboot again.
 	case datastore.MenderStateRollbackReboot:
-		return NewAfterRollbackRebootState(&sd.UpdateInfo), false
+	case datastore.MenderStateVerifyRollbackReboot:
+	case datastore.MenderStateAfterRollbackReboot:
+		return NewUpdateVerifyRollbackRebootState(&sd.UpdateInfo), false
 
 	// Rerun commit-leave
-	case datastore.MenderStateUpdateCommit:
-		c.SetNextState(NewUpdateCommitState(&sd.UpdateInfo))
-		return idleState, false
+	case datastore.MenderStateUpdateAfterCommit:
+		return NewUpdateAfterCommitState(&sd.UpdateInfo), false
 
-	// invalid entrypoint into the state-machine. Error out.
-	default:
-		if err := DeploymentLogger.Enable(sd.UpdateInfo.ID); err != nil {
-			// just log error
-			log.Errorf("failed to enable deployment logger: %s", err)
-		}
-		log.Errorf("Update was interrupted in state: %s", sd.Name)
-		me := NewFatalError(errors.Errorf("Update was interrupted in state: %s", sd.Name))
-
+	// Error state (ArtifactFailure) should be retried.
+	case datastore.MenderStateUpdateError:
 		return NewUpdateErrorState(me, &sd.UpdateInfo), false
+
+	// Cleanup state should be retried.
+	case datastore.MenderStateUpdateCleanup:
+		return NewUpdateCleanupState(&sd.UpdateInfo, client.StatusFailure), false
+
+	// All other states to go either error or rollback state, depending on
+	// what's supported.
+	default:
+		if sd.UpdateInfo.SupportsRollback == datastore.RollbackSupported {
+			return NewUpdateRollbackState(&sd.UpdateInfo), false
+		} else {
+			return NewUpdateErrorState(me, &sd.UpdateInfo), false
+		}
 	}
+
+	// Impossible to get here, but Go doesn't understand that.
+	return nil, false
 }
 
 type AuthorizeWaitState struct {
-	WaitState
+	*waitState
 }
 
 func NewAuthorizeWaitState() State {
 	return &AuthorizeWaitState{
-		WaitState: NewWaitState(datastore.MenderStateAuthorizeWait, ToIdle),
+		waitState: NewWaitState(datastore.MenderStateAuthorizeWait, ToIdle),
 	}
 }
 
@@ -444,13 +475,13 @@ func (a *AuthorizeState) Handle(ctx *StateContext, c Controller) (State, bool) {
 }
 
 type UpdateCommitState struct {
-	UpdateState
+	*updateState
 }
 
 func NewUpdateCommitState(update *datastore.UpdateInfo) State {
 	return &UpdateCommitState{
-		UpdateState: NewUpdateState(datastore.MenderStateUpdateCommit,
-			ToArtifactCommit, update),
+		updateState: NewUpdateState(datastore.MenderStateUpdateCommit,
+			ToArtifactCommit_Enter, update),
 	}
 }
 
@@ -466,8 +497,10 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 	artifactName, err := c.GetCurrentArtifactName()
 
 	if err != nil {
-		log.Errorf("Cannot determine name of new artifact. Update will not continue: %v : %v", defaultDeviceTypeFile, err)
-		return NewRollbackState(uc.Update(), true), false
+		merr := NewTransientError(errors.Errorf(
+			"Cannot determine name of new artifact. Update will not continue: %s : %s",
+			defaultDeviceTypeFile, err.Error()))
+		return uc.HandleError(ctx, c, merr)
 	} else if uc.Update().ArtifactName() != artifactName {
 		// seems like we're running in a different image than expected from update
 		// information, best report an error
@@ -477,7 +510,7 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 		// log.Errorf("running with image %v, expected updated image %v",
 		// 	artifactName, uc.Update().ArtifactName())
 
-		// return NewRollbackState(uc.Update(), true), false
+		// return NewUpdateRollbackState(uc.Update(), true), false
 	}
 
 	// update info and has upgrade flag are there, we're running the new
@@ -486,8 +519,8 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 
 	// check if state scripts version is supported
 	if err = c.CheckScriptsCompatibility(); err != nil {
-		log.Errorf("update commit failed: %s", err)
-		return NewRollbackState(uc.Update(), true), false
+		merr := NewTransientError(errors.Errorf("update commit failed: %s", err.Error()))
+		return uc.HandleError(ctx, c, merr)
 	}
 
 	for _, i := range c.GetInstallers() {
@@ -497,21 +530,39 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 			// we need to perform roll-back here; one scenario is when u-boot fw utils
 			// won't work after update; at this point without rolling-back it won't be
 			// possible to perform new update
-			return NewRollbackState(uc.Update(), true), false
+			merr := NewTransientError(errors.Errorf("update commit failed: %s", err.Error()))
+			return uc.HandleError(ctx, c, merr)
 		}
 	}
 
-	log.Info("Storing commit state data")
-	if err := StoreStateData(ctx.store, datastore.StateData{
-		Name:       uc.Id(),
-		UpdateInfo: *uc.Update(),
-	}); err != nil {
-		// The update is already committed, so not much we can do
-		log.Errorf("failed to write state-data to storage: %v", err)
-	}
+	// update is commited now; do post commit-tasks
+	return NewUpdateAfterCommitState(uc.Update()), false
+}
 
-	// update is commited now; clean up
+type UpdateAfterCommitState struct {
+	*updateState
+}
+
+func NewUpdateAfterCommitState(update *datastore.UpdateInfo) State {
+	return &UpdateAfterCommitState{
+		updateState: NewUpdateState(datastore.MenderStateUpdateCommit,
+			ToArtifactCommit_Leave, update),
+	}
+}
+
+func (uc *UpdateAfterCommitState) Handle(ctx *StateContext, c Controller) (State, bool) {
+	// This state only exists to rerun Commit_Leave scripts in the event of
+	// spontaneous shutdowns, so there is nothing else to do in this state.
+
+	// update is commited; clean up
 	return NewUpdateCleanupState(uc.Update(), client.StatusSuccess), false
+}
+
+func (uc *UpdateAfterCommitState) HandleError(ctx *StateContext, c Controller, merr menderError) (State, bool) {
+	log.Error(merr.Error())
+
+	// Too late to back out now. Just report the error, but do not try to roll back.
+	return NewUpdateStatusReportState(uc.Update(), client.StatusFailure), false
 }
 
 type UpdateCheckState struct {
@@ -564,14 +615,6 @@ func (u *UpdateFetchState) Handle(ctx *StateContext, c Controller) (State, bool)
 
 	log.Debugf("handle update fetch state")
 
-	if err := StoreStateData(ctx.store, datastore.StateData{
-		Name:       u.Id(),
-		UpdateInfo: u.update,
-	}); err != nil {
-		log.Errorf("failed to store state data in fetch state: %v", err)
-		return NewUpdateStatusReportState(&u.update, client.StatusFailure), false
-	}
-
 	merr := c.ReportUpdateStatus(&u.update, client.StatusDownloading)
 	if merr != nil && merr.IsFatal() {
 		return NewUpdateStatusReportState(&u.update, client.StatusFailure), false
@@ -620,14 +663,6 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 
 	log.Debugf("handle update install state")
 
-	if err := StoreStateData(ctx.store, datastore.StateData{
-		Name:       u.Id(),
-		UpdateInfo: u.update,
-	}); err != nil {
-		log.Errorf("failed to store state data in install state: %v", err)
-		return NewUpdateStatusReportState(&u.update, client.StatusFailure), false
-	}
-
 	merr := c.ReportUpdateStatus(&u.update, client.StatusDownloading)
 	if merr != nil && merr.IsFatal() {
 		return NewUpdateStatusReportState(&u.update, client.StatusFailure), false
@@ -649,18 +684,18 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 	// is important since they need to call their Cleanup functions after we
 	// have started the download.
 	err = StoreStateData(ctx.store, datastore.StateData{
-		Name: datastore.MenderStateUpdateStore,
+		Name: u.Id(),
 		UpdateInfo: u.update,
 	})
 	if err != nil {
 		log.Error("Could not write state data to persistent storage: ", err.Error())
-		return NewUpdateErrorState(NewTransientError(err), &u.update), false
+		return NewUpdateCleanupState(&u.update, client.StatusFailure), false
 	}
 
 	err = installer.StorePayloads()
 	if err != nil {
 		log.Errorf("Artifact install failed: %s", err)
-		return NewUpdateErrorState(NewTransientError(err), &u.update), false
+		return NewUpdateCleanupState(&u.update, client.StatusFailure), false
 	}
 
 	for _, i := range installers {
@@ -680,7 +715,7 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 
 	// Make sure SupportsRollback status is stored
 	err = StoreStateData(ctx.store, datastore.StateData{
-		Name: datastore.MenderStateUpdateStore,
+		Name: u.Id(),
 		UpdateInfo: u.update,
 	})
 	if err != nil {
@@ -707,12 +742,12 @@ func (us *UpdateStoreState) Update() *datastore.UpdateInfo {
 }
 
 type UpdateInstallState struct {
-	UpdateState
+	*updateState
 }
 
 func NewUpdateInstallState(update *datastore.UpdateInfo) State {
 	return &UpdateInstallState{
-		UpdateState: NewUpdateState(datastore.MenderStateUpdateInstall,
+		updateState: NewUpdateState(datastore.MenderStateUpdateInstall,
 			ToArtifactInstall, update),
 	}
 }
@@ -725,21 +760,21 @@ func (is *UpdateInstallState) Handle(ctx *StateContext, c Controller) (State, bo
 
 	merr := c.ReportUpdateStatus(is.Update(), client.StatusInstalling)
 	if merr != nil && merr.IsFatal() {
-		return NewUpdateErrorState(NewTransientError(merr), is.Update()), false
+		return is.HandleError(ctx, c, merr)
 	}
 
 	// If download was successful, install update, which for dual rootfs
 	// means marking inactive partition as the active one.
 	for _, i := range c.GetInstallers() {
 		if err := i.InstallUpdate(); err != nil {
-			return NewUpdateErrorState(NewTransientError(err), is.Update()), false
+			return is.HandleError(ctx, c, NewTransientError(err))
 		}
 	}
 
 	for _, i := range c.GetInstallers() {
 		needsReboot, err := i.NeedsReboot()
 		if err != nil {
-			return NewUpdateErrorState(NewTransientError(err), is.Update()), false
+			return is.HandleError(ctx, c, NewTransientError(err))
 		}
 		if needsReboot {
 			is.Update().RebootRequested = true
@@ -756,14 +791,14 @@ func (is *UpdateInstallState) Handle(ctx *StateContext, c Controller) (State, bo
 	})
 	if err != nil {
 		log.Error("Could not write state data to persistent storage: ", err.Error())
-		return NewUpdateErrorState(NewTransientError(err), is.Update()), false
+		return is.HandleError(ctx, c, NewTransientError(err))
 	}
 
-	return NewRebootState(is.Update()), false
+	return NewUpdateRebootState(is.Update()), false
 }
 
 type FetchStoreRetryState struct {
-	WaitState
+	*waitState
 	from   State
 	update datastore.UpdateInfo
 	err    error
@@ -772,7 +807,7 @@ type FetchStoreRetryState struct {
 func NewFetchStoreRetryState(from State, update *datastore.UpdateInfo,
 	err error) State {
 	return &FetchStoreRetryState{
-		WaitState: NewWaitState(datastore.MenderStateFetchStoreRetryWait, ToDownload),
+		waitState: NewWaitState(datastore.MenderStateFetchStoreRetryWait, ToDownload),
 		from:      from,
 		update:    *update,
 		err:       err,
@@ -800,12 +835,12 @@ func (fir *FetchStoreRetryState) Handle(ctx *StateContext, c Controller) (State,
 }
 
 type CheckWaitState struct {
-	WaitState
+	*waitState
 }
 
 func NewCheckWaitState() State {
 	return &CheckWaitState{
-		WaitState: NewWaitState(datastore.MenderStateCheckWait, ToIdle),
+		waitState: NewWaitState(datastore.MenderStateCheckWait, ToIdle),
 	}
 }
 
@@ -943,13 +978,13 @@ func (ue *UpdateErrorState) Update() *datastore.UpdateInfo {
 }
 
 type UpdateCleanupState struct {
-	UpdateState
+	*updateState
 	status string
 }
 
 func NewUpdateCleanupState(update *datastore.UpdateInfo, status string) State {
 	return &UpdateCleanupState{
-		UpdateState: NewUpdateState(datastore.MenderStateUpdateCleanup,
+		updateState: NewUpdateState(datastore.MenderStateUpdateCleanup,
 			ToNone, update),
 		status: status,
 	}
@@ -984,7 +1019,7 @@ func (s *UpdateCleanupState) Handle(ctx *StateContext, c Controller) (State, boo
 // to report state for a number of times. In case of recurring failure, the
 // update is deemed as failed.
 type UpdateStatusReportState struct {
-	UpdateState
+	*updateState
 	status             string
 	triesSendingReport int
 	reportSent         bool
@@ -994,7 +1029,7 @@ type UpdateStatusReportState struct {
 
 func NewUpdateStatusReportState(update *datastore.UpdateInfo, status string) State {
 	return &UpdateStatusReportState{
-		UpdateState: NewUpdateState(datastore.MenderStateUpdateStatusReport,
+		updateState: NewUpdateState(datastore.MenderStateUpdateStatusReport,
 			ToNone, update),
 		status: status,
 	}
@@ -1044,39 +1079,20 @@ func (usr *UpdateStatusReportState) Handle(ctx *StateContext, c Controller) (Sta
 
 	log.Debug("handle update status report state")
 
-	// Do not store this if artifact-commit scripts are run when leaving the state
-	// as then the scripts will not be rerun
-	if usr.Transition() != ToArtifactCommit {
-		if err := StoreStateData(ctx.store, datastore.StateData{
-			Name:         usr.Id(),
-			UpdateInfo:   *usr.Update(),
-		}); err != nil {
-			log.Errorf("failed to store state data in update status report state: %v",
-				err)
-			return NewReportErrorState(usr.Update(), usr.status), false
-		}
-	}
 	if err := sendDeploymentStatus(usr.Update(), usr.status,
 		&usr.triesSendingReport, &usr.reportSent, c); err != nil {
+
 		log.Errorf("failed to send status to server: %v", err)
-		if err.IsFatal() {
-			return NewReportErrorState(usr.Update(), usr.status), false
-		}
-		return NewUpdateStatusReportRetryState(usr, usr.Update(),
-			usr.status, usr.triesSendingReport), false
+		return usr.HandleError(ctx, c, err)
 	}
 
 	if usr.status == client.StatusFailure {
 		log.Debugf("attempting to upload deployment logs for failed update")
 		if err := sendDeploymentLogs(usr.Update(),
 			&usr.triesSendingLogs, usr.logs, c); err != nil {
+
 			log.Errorf("failed to send deployment logs to server: %v", err)
-			if err.IsFatal() {
-				// there is no point in retrying
-				return NewReportErrorState(usr.Update(), usr.status), false
-			}
-			return NewUpdateStatusReportRetryState(usr, usr.Update(), usr.status,
-				usr.triesSendingLogs), false
+			return usr.HandleError(ctx, c, err)
 		}
 	}
 
@@ -1087,8 +1103,19 @@ func (usr *UpdateStatusReportState) Handle(ctx *StateContext, c Controller) (Sta
 	return idleState, false
 }
 
+func (usr *UpdateStatusReportState) HandleError(ctx *StateContext, c Controller,
+	merr menderError) (State, bool) {
+
+	if merr.IsFatal() {
+		// there is no point in retrying
+		return NewReportErrorState(usr.Update(), usr.status), false
+	}
+	return NewUpdateStatusReportRetryState(usr, usr.Update(), usr.status,
+		usr.triesSendingLogs), false
+}
+
 type UpdateStatusReportRetryState struct {
-	WaitState
+	*waitState
 	reportState  State
 	update       datastore.UpdateInfo
 	status       string
@@ -1098,7 +1125,7 @@ type UpdateStatusReportRetryState struct {
 func NewUpdateStatusReportRetryState(reportState State,
 	update *datastore.UpdateInfo, status string, tries int) State {
 	return &UpdateStatusReportRetryState{
-		WaitState:    NewWaitState(datastore.MenderStatusReportRetryState, ToNone),
+		waitState:    NewWaitState(datastore.MenderStatusReportRetryState, ToNone),
 		reportState:  reportState,
 		update:       *update,
 		status:       status,
@@ -1140,13 +1167,13 @@ func (usr *UpdateStatusReportRetryState) Update() *datastore.UpdateInfo {
 }
 
 type ReportErrorState struct {
-	UpdateState
+	*updateState
 	updateStatus string
 }
 
 func NewReportErrorState(update *datastore.UpdateInfo, status string) State {
 	return &ReportErrorState{
-		UpdateState: NewUpdateState(datastore.MenderStateReportStatusError,
+		updateState: NewUpdateState(datastore.MenderStateReportStatusError,
 			ToArtifactFailure, update),
 		updateStatus: status,
 	}
@@ -1162,7 +1189,7 @@ func (res *ReportErrorState) Handle(ctx *StateContext, c Controller) (State, boo
 	switch res.updateStatus {
 	case client.StatusSuccess:
 		// error while reporting success; rollback
-		return NewRollbackState(res.Update(), true), false
+		return NewUpdateRollbackState(res.Update()), false
 	case client.StatusFailure:
 		// error while reporting failure;
 		// start from scratch as previous update was broken
@@ -1178,13 +1205,18 @@ func (res *ReportErrorState) Handle(ctx *StateContext, c Controller) (State, boo
 	}
 }
 
-type RebootState struct {
-	UpdateState
+func (res *ReportErrorState) HandleError(ctx *StateContext, c Controller, merr menderError) (State, bool) {
+	log.Errorf("Reached final error state: %s", merr.Error())
+	return idleState, false
 }
 
-func NewRebootState(update *datastore.UpdateInfo) State {
-	return &RebootState{
-		UpdateState: NewUpdateState(datastore.MenderStateReboot,
+type UpdateRebootState struct {
+	*updateState
+}
+
+func NewUpdateRebootState(update *datastore.UpdateInfo) State {
+	return &UpdateRebootState{
+		updateState: NewUpdateState(datastore.MenderStateReboot,
 			ToArtifactReboot_Enter, update),
 	}
 }
@@ -1192,7 +1224,7 @@ func NewRebootState(update *datastore.UpdateInfo) State {
 // NOTE: Reboot-hardening: State data for reboot state is stored in the reboot-enter
 // transition, so that a power-cycle in reboot-enter does in fact install the newly installed
 // partition.
-func (e *RebootState) Handle(ctx *StateContext, c Controller) (State, bool) {
+func (e *UpdateRebootState) Handle(ctx *StateContext, c Controller) (State, bool) {
 
 	// start deployment logging
 	if err := DeploymentLogger.Enable(e.Update().ID); err != nil {
@@ -1204,7 +1236,7 @@ func (e *RebootState) Handle(ctx *StateContext, c Controller) (State, bool) {
 
 	merr := c.ReportUpdateStatus(e.Update(), client.StatusRebooting)
 	if merr != nil && merr.IsFatal() {
-		return NewRollbackState(e.Update(), false), false
+		return NewUpdateRollbackState(e.Update()), false
 	}
 
 	log.Info("rebooting device")
@@ -1212,27 +1244,49 @@ func (e *RebootState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	for _, i := range c.GetInstallers() {
 		if err := i.Reboot(); err != nil {
 			log.Errorf("error rebooting device: %v", err)
-			return NewRollbackState(e.Update(), false), false
+			return NewUpdateRollbackState(e.Update()), false
 		}
 	}
 
 	// We may never get here, if the machine we're on rebooted. However, if
 	// we rebooted a peripheral device, we will get here.
-	return handleRebooted(e.Update(), c)
+	return NewUpdateVerifyRebootState(e.Update()), false
 }
 
-type AfterRebootState struct {
-	UpdateState
+type UpdateVerifyRebootState struct {
+	*updateState
 }
 
-func NewAfterRebootState(update *datastore.UpdateInfo) State {
-	return &AfterRebootState{
-		UpdateState: NewUpdateState(datastore.MenderStateAfterReboot,
+func NewUpdateVerifyRebootState(update *datastore.UpdateInfo) State {
+	return &UpdateVerifyRebootState{
+		updateState: NewUpdateState(datastore.MenderStateAfterReboot,
 			ToArtifactReboot_Leave, update),
 	}
 }
 
-func (rs *AfterRebootState) Handle(ctx *StateContext,
+func (rs *UpdateVerifyRebootState) Handle(ctx *StateContext, c Controller) (State, bool) {
+	for _, i := range c.GetInstallers() {
+		err := i.VerifyReboot()
+		if err != nil {
+			return rs.HandleError(ctx, c, NewTransientError(err))
+		}
+	}
+
+	return NewUpdateAfterRebootState(rs.Update()), false
+}
+
+type UpdateAfterRebootState struct {
+	*updateState
+}
+
+func NewUpdateAfterRebootState(update *datastore.UpdateInfo) State {
+	return &UpdateAfterRebootState{
+		updateState: NewUpdateState(datastore.MenderStateAfterReboot,
+			ToArtifactReboot_Leave, update),
+	}
+}
+
+func (rs *UpdateAfterRebootState) Handle(ctx *StateContext,
 	c Controller) (State, bool) {
 	// start deployment logging; no error checking
 	// we can do nothing here; either we will have the logs or not...
@@ -1244,19 +1298,17 @@ func (rs *AfterRebootState) Handle(ctx *StateContext,
 	return NewUpdateCommitState(rs.Update()), false
 }
 
-type RollbackState struct {
-	UpdateState
-	reboot bool
+type UpdateRollbackState struct {
+	*updateState
 }
 
-func NewRollbackState(update *datastore.UpdateInfo, doReboot bool) State {
-	return &RollbackState{
-		UpdateState: NewUpdateState(datastore.MenderStateRollback, ToArtifactRollback, update),
-		reboot:      doReboot,
+func NewUpdateRollbackState(update *datastore.UpdateInfo) State {
+	return &UpdateRollbackState{
+		updateState: NewUpdateState(datastore.MenderStateRollback, ToArtifactRollback, update),
 	}
 }
 
-func (rs *RollbackState) Handle(ctx *StateContext, c Controller) (State, bool) {
+func (rs *UpdateRollbackState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	// start deployment logging
 	if err := DeploymentLogger.Enable(rs.Update().ID); err != nil {
 		// just log error; we need to reboot anyway
@@ -1269,12 +1321,12 @@ func (rs *RollbackState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	for _, i := range c.GetInstallers() {
 		if err := i.Rollback(); err != nil {
 			log.Errorf("rollback failed: %s", err)
-			return NewErrorState(NewFatalError(err)), false
+			return rs.HandleError(ctx, c, NewFatalError(err))
 		}
 	}
-	if rs.reboot {
+	if rs.Update().RebootRequested {
 		log.Debug("will try to rollback reboot the device")
-		return NewRollbackRebootState(rs.Update()), false
+		return NewUpdateRollbackRebootState(rs.Update()), false
 	}
 
 	// if no reboot is needed, just return the error and start over
@@ -1282,18 +1334,23 @@ func (rs *RollbackState) Handle(ctx *StateContext, c Controller) (State, bool) {
 		rs.Update()), false
 }
 
-type RollbackRebootState struct {
-	UpdateState
+func (rs *UpdateRollbackState) HandleError(ctx *StateContext, c Controller, merr menderError) (State, bool) {
+	log.Error(merr.Error())
+	return NewUpdateErrorState(merr, rs.Update()), false
 }
 
-func NewRollbackRebootState(update *datastore.UpdateInfo) State {
-	return &RollbackRebootState{
-		UpdateState: NewUpdateState(datastore.MenderStateRollbackReboot,
+type UpdateRollbackRebootState struct {
+	*updateState
+}
+
+func NewUpdateRollbackRebootState(update *datastore.UpdateInfo) State {
+	return &UpdateRollbackRebootState{
+		updateState: NewUpdateState(datastore.MenderStateRollbackReboot,
 			ToArtifactRollbackReboot_Enter, update),
 	}
 }
 
-func (rs *RollbackRebootState) Handle(ctx *StateContext, c Controller) (State, bool) {
+func (rs *UpdateRollbackRebootState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	// start deployment logging
 	if err := DeploymentLogger.Enable(rs.Update().ID); err != nil {
 		// just log error; we need to reboot anyway
@@ -1302,39 +1359,68 @@ func (rs *RollbackRebootState) Handle(ctx *StateContext, c Controller) (State, b
 
 	log.Info("rebooting device after rollback")
 
-	if err := StoreStateData(ctx.store, datastore.StateData{
-		Name:       rs.Id(),
-		UpdateInfo: *rs.Update(),
-	}); err != nil {
-		// too late to do anything now, let's play along and reboot
-		log.Errorf("failed to store state data in reboot state: %v, "+
-			"continuing with reboot", err)
-	}
-
 	for _, i := range c.GetInstallers() {
 		if err := i.RollbackReboot(); err != nil {
 			log.Errorf("error rebooting device: %v", err)
-			return NewErrorState(NewFatalError(err)), false
+			// Outcome is irrelevant, we will go to the
+			// VerifyRollbackReboot state regardless.
 		}
 	}
 
 	// We may never get here, if the machine we're on rebooted. However, if
 	// we rebooted a peripheral device, we will get here.
-	return handleRebooted(rs.Update(), c)
+	return NewUpdateVerifyRollbackRebootState(rs.Update()), false
 }
 
-type AfterRollbackRebootState struct {
-	UpdateState
+func (rs *UpdateRollbackRebootState) HandleError(ctx *StateContext,
+	c Controller, merr menderError) (State, bool) {
+
+	// We don't really handle errors here, but instead in the verify state.
+	return NewUpdateVerifyRollbackRebootState(rs.Update()), false
 }
 
-func NewAfterRollbackRebootState(update *datastore.UpdateInfo) State {
-	return &AfterRollbackRebootState{
-		UpdateState: NewUpdateState(datastore.MenderStateAfterRollbackReboot,
+type UpdateVerifyRollbackRebootState struct {
+	*updateState
+}
+
+func NewUpdateVerifyRollbackRebootState(update *datastore.UpdateInfo) State {
+	return &UpdateVerifyRollbackRebootState{
+		updateState: NewUpdateState(datastore.MenderStateAfterReboot,
+			ToArtifactReboot_Leave, update),
+	}
+}
+
+func (rs *UpdateVerifyRollbackRebootState) Handle(ctx *StateContext, c Controller) (State, bool) {
+	for _, i := range c.GetInstallers() {
+		err := i.VerifyRollbackReboot()
+		if err != nil {
+			return rs.HandleError(ctx, c, NewTransientError(err))
+		}
+	}
+
+	return NewUpdateAfterRollbackRebootState(rs.Update()), false
+}
+
+func (rs *UpdateVerifyRollbackRebootState) HandleError(ctx *StateContext,
+	c Controller, merr menderError) (State, bool) {
+
+	log.Errorf("Rollback reboot failed, will retry. Cause: %s", merr.Error())
+
+	return NewUpdateRollbackRebootState(rs.Update()), false
+}
+
+type UpdateAfterRollbackRebootState struct {
+	*updateState
+}
+
+func NewUpdateAfterRollbackRebootState(update *datastore.UpdateInfo) State {
+	return &UpdateAfterRollbackRebootState{
+		updateState: NewUpdateState(datastore.MenderStateAfterRollbackReboot,
 			ToArtifactRollbackReboot_Leave, update),
 	}
 }
 
-func (rs *AfterRollbackRebootState) Handle(ctx *StateContext,
+func (rs *UpdateAfterRollbackRebootState) Handle(ctx *StateContext,
 	c Controller) (State, bool) {
 	// start deployment logging
 	if err := DeploymentLogger.Enable(rs.Update().ID); err != nil {
@@ -1363,10 +1449,16 @@ func StoreStateData(store store.Store, sd datastore.StateData) error {
 	if sd.Version == 0 {
 		sd.Version = datastore.StateDataVersion
 	}
+	sd.UpdateInfo.StateDataStoreCount++
 	data, _ := json.Marshal(sd)
 
 	return store.WriteAll(datastore.StateDataKey, data)
 }
+
+// This number should be kept quite a lot higher than the number of expected
+// state storage operations, which is usually roughly equivalent to the number
+// of state transitions.
+const maximumStateDataStoreCount int = 50
 
 func LoadStateData(store store.Store) (datastore.StateData, error) {
 	data, err := store.ReadAll(datastore.StateDataKey)

@@ -134,3 +134,12 @@ func NewMemStore() *MemStore {
 		data: make(map[string]*MemStoreData),
 	}
 }
+
+func (ms *MemStore) WriteTransaction(txnFunc func(txn Transaction) error) error {
+	// No transaction support for now, although it could quite easily be
+	// implemented using mutex locks.
+	return NoTransactionSupport
+}
+func (ms *MemStore) ReadTransaction(txnFunc func(txn Transaction) error) error {
+	return NoTransactionSupport
+}

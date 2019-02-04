@@ -65,3 +65,10 @@ func (ms *MockStore) Remove(name string) error {
 	ret := ms.Called(name)
 	return ret.Error(0)
 }
+
+func (ms *MockStore) WriteTransaction(txnFunc func(txn Transaction) error) error {
+	return NoTransactionSupport
+}
+func (ms *MockStore) ReadTransaction(txnFunc func(txn Transaction) error) error {
+	return NoTransactionSupport
+}

@@ -132,3 +132,10 @@ func (df DirFile) Commit() error {
 func (d DirStore) Remove(name string) error {
 	return os.Remove(d.getPath(name))
 }
+
+func (d *DirStore) WriteTransaction(txnFunc func(txn Transaction) error) error {
+	return NoTransactionSupport
+}
+func (d *DirStore) ReadTransaction(txnFunc func(txn Transaction) error) error {
+	return NoTransactionSupport
+}

@@ -662,7 +662,8 @@ func transitionState(to State, ctx *StateContext, c Controller) (State, bool) {
 		})
 		if err != nil {
 			log.Error("Could not write state data to persistent storage: ", err.Error())
-			return us.HandleError(ctx, c, NewFatalError(err))
+			state, cancelled := us.HandleError(ctx, c, NewFatalError(err))
+			return handleStateDataError(state, cancelled, us.Id(), us.Update(), err)
 		}
 	}
 

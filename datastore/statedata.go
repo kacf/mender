@@ -69,7 +69,7 @@ const (
 	// commit needed
 	MenderStateUpdateCommit
 	// commit is finished
-	MenderStateUpdateAfterCommit
+	MenderStateUpdateAfterFirstCommit
 	// status report
 	MenderStateUpdateStatusReport
 	// wait before retrying sending either report or deployment logs
@@ -115,7 +115,7 @@ var (
 		MenderStateFetchStoreRetryWait:  "fetch-install-retry-wait",
 		MenderStateUpdateVerify:         "update-verify",
 		MenderStateUpdateCommit:         "update-commit",
-		MenderStateUpdateAfterCommit:    "update-after-commit",
+		MenderStateUpdateAfterFirstCommit: "update-after-first-commit",
 		MenderStateUpdateStatusReport:   "update-status-report",
 		MenderStatusReportRetryState:    "update-retry-report",
 		MenderStateReportStatusError:    "status-report-error",

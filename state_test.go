@@ -1166,7 +1166,9 @@ type stateTransitionsWithUpdateModulesTestCase struct {
 	artifactStateChain []string
 	reportsLog         []string
 	errorStates        []string
+	errorForever       bool
 	spontRebootStates  []string
+	spontRebootForever bool
 	rollbackDisabled   bool
 	rebootDisabled     bool
 }
@@ -1237,7 +1239,40 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in download state, no rollback",
+		caseName: "Normal install",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateAfterRebootState{},
+			&UpdateCommitState{},
+			&UpdateAfterCommitState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactCommit",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"success",
+		},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Error in Download state, no rollback",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1258,7 +1293,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in download state, no rollback",
+		caseName: "Killed in Download state, no rollback",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1279,7 +1314,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in install state, no rollback",
+		caseName: "Error in ArtifactInstall state, no rollback",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1306,7 +1341,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in install state, no rollback",
+		caseName: "Killed in ArtifactInstall state, no rollback",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1333,7 +1368,63 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in reboot state",
+		caseName: "Error in ArtifactInstall state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRollbackState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"ArtifactRollback",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"failure",
+		},
+		errorStates: []string{"ArtifactInstall"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Killed in ArtifactInstall state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRollbackState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"ArtifactRollback",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"failure",
+		},
+		spontRebootStates: []string{"ArtifactInstall"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Error in ArtifactReboot state",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1370,7 +1461,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in reboot state",
+		caseName: "Killed in ArtifactReboot state",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1401,6 +1492,760 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			"success",
 		},
 		spontRebootStates: []string{"ArtifactReboot"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Error in ArtifactVerifyReboot state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Killed in ArtifactVerifyReboot state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		spontRebootStates: []string{"ArtifactVerifyReboot"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Error in ArtifactRollback state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot", "ArtifactRollback"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Killed in ArtifactRollback state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot"},
+		spontRebootStates: []string{"ArtifactRollback"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Error in ArtifactRollbackReboot state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot", "ArtifactRollbackReboot"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Killed in ArtifactRollbackReboot state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot"},
+		spontRebootStates: []string{"ArtifactRollbackReboot"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Error in ArtifactVerifyRollbackReboot state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot", "ArtifactVerifyRollbackReboot"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Killed in ArtifactVerifyRollbackReboot state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot"},
+		spontRebootStates: []string{"ArtifactVerifyRollbackReboot"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Error in ArtifactFailure state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot", "ArtifactFailure"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Killed in ArtifactFailure state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot"},
+		spontRebootStates: []string{"ArtifactFailure"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Error in Cleanup state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot", "Cleanup"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Killed in Cleanup state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot"},
+		spontRebootStates: []string{"Cleanup"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Error in ArtifactCommit state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactCommit",
+			"Artifact",
+			"ArtifactFailure",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactCommit"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Killed in ArtifactCommit state",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateCleanupState{},
+			&UpdateCleanupState{},
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"Cleanup",
+			"Cleanup",
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot"},
+		spontRebootStates: []string{"Cleanup"},
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Break out of error loop",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			// Truncated after maximum number of state transitions.
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactRollbackReboot",
+			// Truncated after maximum number of state transitions.
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot", "ArtifactVerifyRollbackReboot"},
+		errorForever: true,
+	},
+
+	stateTransitionsWithUpdateModulesTestCase{
+		caseName: "Break out of spontaneous reboot loop",
+		stateChain: []State{
+			&UpdateFetchState{},
+			&UpdateStoreState{},
+			&UpdateInstallState{},
+			&UpdateRebootState{},
+			&UpdateVerifyRebootState{},
+			&UpdateRollbackState{},
+			&UpdateRollbackRebootState{},
+			&UpdateVerifyRollbackRebootState{},
+			&UpdateAfterRollbackRebootState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			&UpdateErrorState{},
+			// Truncated after maximum number of state transitions.
+			&UpdateStatusReportState{},
+			&IdleState{},
+		},
+		artifactStateChain: []string{
+			"Download",
+			"SupportsRollback",
+			"ArtifactInstall",
+			"NeedsArtifactReboot",
+			"ArtifactReboot",
+			"ArtifactVerifyReboot",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			"ArtifactFailure",
+			// Truncated after maximum number of state transitions.
+		},
+		reportsLog: []string{
+			"downloading",
+			"installing",
+			"rebooting",
+			"failure",
+		},
+		errorStates: []string{"ArtifactVerifyReboot"},
+		spontRebootStates: []string{"ArtifactFailure"},
+		spontRebootForever: true,
 	},
 
 }
@@ -1450,7 +2295,7 @@ func TestStateTransitionsWithUpdateModules(t *testing.T) {
 
 				waitStatus := cmd.ProcessState.Sys().(syscall.WaitStatus)
 				if waitStatus.Signal() == syscall.SIGKILL &&
-					killCount < len(c.spontRebootStates) {
+					(killCount < len(c.spontRebootStates) || c.spontRebootForever) {
 
 					t.Log("Killed as expected")
 					killCount++
@@ -1460,7 +2305,7 @@ func TestStateTransitionsWithUpdateModules(t *testing.T) {
 				t.Fatal(err.Error())
 			}
 
-			logContent := make([]byte, 1000)
+			logContent := make([]byte, 10000)
 
 			log, err := os.Open(path.Join(tmpdir, "module.log"))
 			require.NoError(t, err)
@@ -1546,14 +2391,42 @@ echo "$1" >> %s
 
 	// Kill parent (mender) in specified state
 	for _, state := range c.spontRebootStates {
-		s := fmt.Sprintf("if [ \"$1\" = \"%s\" ]; then kill -9 $PPID; fi\n", state)
+		s := fmt.Sprintf("if [ \"$1\" = \"%s\" ]; then\n", state)
 		fd.Write([]byte(s))
+
+		// Prevent spontaneous rebooting forever.
+		if !c.spontRebootForever {
+			fd.Write([]byte("if [ ! -e \"$2/tmp/$1.already-killed\" ]; then\n"))
+			fd.Write([]byte("touch \"$2/tmp/$1.already-killed\"\n"))
+		}
+
+		fd.Write([]byte("kill -9 $PPID\n"))
+
+		if !c.spontRebootForever {
+			fd.Write([]byte("fi\n"))
+		}
+
+		fd.Write([]byte("fi\n"))
 	}
 
 	// Produce error in specified state
 	for _, state := range c.errorStates {
-		s := fmt.Sprintf("if [ \"$1\" = \"%s\" ]; then exit 1; fi\n", state)
+		s := fmt.Sprintf("if [ \"$1\" = \"%s\" ]; then\n", state)
 		fd.Write([]byte(s))
+
+		// Prevent returning same error forever.
+		if !c.errorForever {
+			fd.Write([]byte("if [ ! -e \"$2/tmp/$1.already-errored\" ]; then\n"))
+			fd.Write([]byte("touch \"$2/tmp/$1.already-errored\"\n"))
+		}
+
+		fd.Write([]byte("exit 1\n"))
+
+		if !c.errorForever {
+			fd.Write([]byte("fi\n"))
+		}
+
+		fd.Write([]byte("fi\n"))
 	}
 
 	fd.Write([]byte("if [ \"$1\" = \"SupportsRollback\" ]; then\n"))

@@ -350,18 +350,18 @@ type InitState struct {
 
 func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	// restore previous state information
-	sd, err := LoadStateData(ctx.store)
+	sd, sdErr := LoadStateData(ctx.store)
 
 	// handle easy case first: no previous state stored,
 	// means no update was in progress; we should continue from idle
-	if err != nil && os.IsNotExist(err) {
+	if sdErr != nil && os.IsNotExist(sdErr) {
 		log.Debug("no state data stored")
 		return idleState, false
 	}
 
-	if err != nil {
-		log.Errorf("failed to restore state data: %v", err)
-		me := NewFatalError(errors.Wrapf(err, "failed to restore state data"))
+	if sdErr != nil && sdErr != maximumStateDataStoreCountExceeded {
+		log.Errorf("failed to restore state data: %v", sdErr)
+		me := NewFatalError(errors.Wrapf(sdErr, "failed to restore state data"))
 		return NewUpdateErrorState(me, &datastore.UpdateInfo{
 			ID: "unknown",
 		}), false
@@ -372,6 +372,12 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	if err := DeploymentLogger.Enable(sd.UpdateInfo.ID); err != nil {
 		// just log error
 		log.Errorf("failed to enable deployment logger: %s", err)
+	}
+
+	if sdErr == maximumStateDataStoreCountExceeded {
+		// State argument not needed since we already know that maximum
+		// count was exceeded and a different state will be returned.
+		return handleStateDataError(nil, false, sd.Name, &sd.UpdateInfo, sdErr)
 	}
 
 	msg := fmt.Sprintf("Update was interrupted in state: %s", sd.Name)
@@ -387,13 +393,8 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	// Used in some cases below. Doesn't mean that there must be an error.
 	me := NewFatalError(errors.New(msg))
 
-	if sd.UpdateInfo.StateDataStoreCount >= maximumStateDataStoreCount {
-		log.Error("State loop detected, breaking out")
-		return NewUpdateStatusReportState(&sd.UpdateInfo, client.StatusFailure), false
-	}
-
 	// We need to restore our payload handlers.
-	err = c.RestoreInstallersFromTypeList(sd.UpdateInfo.Artifact.PayloadTypes)
+	err := c.RestoreInstallersFromTypeList(sd.UpdateInfo.Artifact.PayloadTypes)
 	if err != nil {
 		// Getting an error here is *really* bad. It means that we
 		// cannot recover *anything*. Report big bad failure.
@@ -420,6 +421,10 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 		datastore.MenderStateAfterRollbackReboot:
 
 		return NewUpdateVerifyRollbackRebootState(&sd.UpdateInfo), false
+
+	// Rerun commits in subsequent payloads
+	case datastore.MenderStateUpdateAfterFirstCommit:
+		return NewUpdateAfterFirstCommitState(&sd.UpdateInfo), false
 
 	// Rerun commit-leave
 	case datastore.MenderStateUpdateAfterCommit:
@@ -537,6 +542,9 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 		return uc.HandleError(ctx, c, merr)
 	}
 
+	// Commit first payload only. After this commit it is no longer possible
+	// to roll back, so the rest (if any) will be committed in the next
+	// state.
 	for _, i := range c.GetInstallers() {
 		err = i.CommitUpdate()
 		if err != nil {
@@ -550,7 +558,34 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 	}
 
 	// update is commited now; do post commit-tasks
-	return NewUpdateAfterCommitState(uc.Update()), false
+	return NewUpdateAfterFirstCommitState(uc.Update()), false
+}
+
+type UpdateAfterFirstCommitState struct {
+	*updateState
+}
+
+func NewUpdateAfterFirstCommitState(update *datastore.UpdateInfo) State {
+	return &UpdateAfterFirstCommitState{
+		updateState: NewUpdateState(datastore.MenderStateUpdateAfterFirstCommit,
+			ToNone, update),
+	}
+}
+
+func (uc *UpdateAfterFirstCommitState) Handle(ctx *StateContext, c Controller) (State, bool) {
+	// This state only exists to rerun Commit_Leave scripts in the event of
+	// spontaneous shutdowns, so there is nothing else to do in this state.
+
+	// update is commited; clean up
+	panic("TODO HERE")
+	return NewUpdateCleanupState(uc.Update(), client.StatusSuccess), false
+}
+
+func (uc *UpdateAfterFirstCommitState) HandleError(ctx *StateContext, c Controller, merr menderError) (State, bool) {
+	log.Error(merr.Error())
+
+	// Too late to back out now. Just report the error, but do not try to roll back.
+	return NewUpdateStatusReportState(uc.Update(), client.StatusFailure), false
 }
 
 type UpdateAfterCommitState struct {
@@ -559,7 +594,7 @@ type UpdateAfterCommitState struct {
 
 func NewUpdateAfterCommitState(update *datastore.UpdateInfo) State {
 	return &UpdateAfterCommitState{
-		updateState: NewUpdateState(datastore.MenderStateUpdateCommit,
+		updateState: NewUpdateState(datastore.MenderStateUpdateAfterCommit,
 			ToArtifactCommit_Leave, update),
 	}
 }
@@ -703,7 +738,8 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 	})
 	if err != nil {
 		log.Error("Could not write state data to persistent storage: ", err.Error())
-		return NewUpdateCleanupState(&u.update, client.StatusFailure), false
+		return handleStateDataError(NewUpdateCleanupState(&u.update, client.StatusFailure),
+			false, u.Id(), &u.update, err)
 	}
 
 	err = installer.StorePayloads()
@@ -736,7 +772,8 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 	})
 	if err != nil {
 		log.Error("Could not write state data to persistent storage: ", err.Error())
-		return NewUpdateErrorState(NewTransientError(err), &u.update), false
+		return handleStateDataError(NewUpdateErrorState(NewTransientError(err), &u.update),
+			false, u.Id(), &u.update, err)
 	}
 
 	// restart counter so that we are able to retry next time
@@ -807,7 +844,9 @@ func (is *UpdateInstallState) Handle(ctx *StateContext, c Controller) (State, bo
 	})
 	if err != nil {
 		log.Error("Could not write state data to persistent storage: ", err.Error())
-		return is.HandleError(ctx, c, NewTransientError(err))
+		state, cancelled := is.HandleError(ctx, c, NewTransientError(err))
+		return handleStateDataError(state, cancelled,
+			datastore.MenderStateUpdateInstall, is.Update(), err)
 	}
 
 	if is.Update().RebootRequested {
@@ -1420,7 +1459,7 @@ type UpdateVerifyRollbackRebootState struct {
 
 func NewUpdateVerifyRollbackRebootState(update *datastore.UpdateInfo) State {
 	return &UpdateVerifyRollbackRebootState{
-		updateState: NewUpdateState(datastore.MenderStateAfterReboot,
+		updateState: NewUpdateState(datastore.MenderStateVerifyRollbackReboot,
 			ToArtifactReboot_Leave, update),
 	}
 }
@@ -1479,15 +1518,47 @@ func (f *FinalState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	panic("reached final state")
 }
 
-func StoreStateData(store store.Store, sd datastore.StateData) error {
+func StoreStateData(dbStore store.Store, sd datastore.StateData) error {
 	// if the verions is not filled in, use the current one
 	if sd.Version == 0 {
 		sd.Version = datastore.StateDataVersion
 	}
-	sd.UpdateInfo.StateDataStoreCount++
-	data, _ := json.Marshal(sd)
 
-	return store.WriteAll(datastore.StateDataKey, data)
+	var storeCountExceeded bool
+
+	err := dbStore.WriteTransaction(func(txn store.Transaction) error {
+		// See if there is an existing entry and update the store count.
+		existingData, err := txn.ReadAll(datastore.StateDataKey)
+		if err == nil {
+			var existing datastore.StateData
+			err := json.Unmarshal(existingData, &existing)
+			if err == nil {
+				sd.UpdateInfo.StateDataStoreCount = existing.UpdateInfo.StateDataStoreCount
+			}
+		}
+
+		if sd.UpdateInfo.StateDataStoreCount >= maximumStateDataStoreCount {
+			// Reset store count to prevent subsequent states from
+			// hitting the same error.
+			sd.UpdateInfo.StateDataStoreCount = 0
+			storeCountExceeded = true
+		}
+
+		log.Errorf("Store: %d", sd.UpdateInfo.StateDataStoreCount)
+		sd.UpdateInfo.StateDataStoreCount++
+		data, err := json.Marshal(sd)
+		if err != nil {
+			return err
+		}
+
+		return txn.WriteAll(datastore.StateDataKey, data)
+	})
+
+	if storeCountExceeded {
+		return maximumStateDataStoreCountExceeded
+	}
+
+	return err
 }
 
 // This number should be kept quite a lot higher than the number of expected
@@ -1495,29 +1566,61 @@ func StoreStateData(store store.Store, sd datastore.StateData) error {
 // of state transitions.
 const maximumStateDataStoreCount int = 50
 
-func LoadStateData(store store.Store) (datastore.StateData, error) {
-	data, err := store.ReadAll(datastore.StateDataKey)
-	if err != nil {
-		return datastore.StateData{}, err
-	}
+// Special kind of error: When this error is returned by LoadStateData, the
+// StateData will also be valid, and can be used to handle the error.
+var maximumStateDataStoreCountExceeded error = errors.New("State data stored and retrieved maximum number of times")
 
+func LoadStateData(dbStore store.Store) (datastore.StateData, error) {
 	var sd datastore.StateData
-	// we are relying on the fact that Unmarshal will decode all and only the fields
-	// that it can find in the destination type.
-	err = json.Unmarshal(data, &sd)
-	if err != nil {
-		return datastore.StateData{}, err
+	var storeCountExceeded bool
+
+	// We do the state data loading in a write transaction so that we can
+	// update the StateDataStoreCount.
+	err := dbStore.WriteTransaction(func(txn store.Transaction) error {
+		data, err := txn.ReadAll(datastore.StateDataKey)
+		if err != nil {
+			return err
+		}
+
+		// we are relying on the fact that Unmarshal will decode all and only the fields
+		// that it can find in the destination type.
+		err = json.Unmarshal(data, &sd)
+		if err != nil {
+			return err
+		}
+
+		switch sd.Version {
+		case 0, 1:
+			// TODO: Fix this.
+			panic("FIX THIS")
+		case 2:
+
+		default:
+			return errors.New("unsupported state data version")
+		}
+
+		log.Errorf("Load: %d", sd.UpdateInfo.StateDataStoreCount)
+		if sd.UpdateInfo.StateDataStoreCount >= maximumStateDataStoreCount {
+			// Reset store count to prevent subsequent states from
+			// hitting the same error.
+			sd.UpdateInfo.StateDataStoreCount = 0
+			storeCountExceeded = true
+		}
+
+		sd.UpdateInfo.StateDataStoreCount++
+		data, err = json.Marshal(sd)
+		if err != nil {
+			return err
+		}
+		// Store the updated count back in the database.
+		return txn.WriteAll(datastore.StateDataKey, data)
+	})
+
+	if storeCountExceeded {
+		return sd, maximumStateDataStoreCountExceeded
 	}
 
-	switch sd.Version {
-	case 0, 1:
-		// TODO: Fix this.
-		return sd, nil
-	case 2:
-		return sd, nil
-	default:
-		return datastore.StateData{}, errors.New("unsupported state data version")
-	}
+	return sd, err
 }
 
 func RemoveStateData(store store.Store) error {
@@ -1525,4 +1628,19 @@ func RemoveStateData(store store.Store) error {
 		return nil
 	}
 	return store.Remove(datastore.StateDataKey)
+}
+
+// Returns newState, unless store count is exceeded.
+func handleStateDataError(newState State, cancelled bool,
+	stateName datastore.MenderState,
+	update *datastore.UpdateInfo, err error) (State, bool) {
+
+	if err == maximumStateDataStoreCountExceeded {
+		log.Errorf("State transition loop detected in state %s: Forcefully aborting "+
+			"update. The system is likely to be in an inconsistent "+
+			"state after this.", stateName)
+		return NewUpdateStatusReportState(update, client.StatusFailure), false
+	}
+
+	return newState, cancelled
 }

@@ -438,7 +438,7 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	case datastore.MenderStateUpdateCleanup:
 		return NewUpdateCleanupState(&sd.UpdateInfo, client.StatusFailure), false
 
-	// All other states to go either error or rollback state, depending on
+	// All other states go to either error or rollback state, depending on
 	// what's supported.
 	default:
 		if sd.UpdateInfo.SupportsRollback == datastore.RollbackSupported {
@@ -545,19 +545,22 @@ func (uc *UpdateCommitState) Handle(ctx *StateContext, c Controller) (State, boo
 	// Commit first payload only. After this commit it is no longer possible
 	// to roll back, so the rest (if any) will be committed in the next
 	// state.
-	for _, i := range c.GetInstallers() {
-		err = i.CommitUpdate()
-		if err != nil {
-			log.Errorf("update commit failed: %s", err)
-			// we need to perform roll-back here; one scenario is when u-boot fw utils
-			// won't work after update; at this point without rolling-back it won't be
-			// possible to perform new update
-			merr := NewTransientError(errors.Errorf("update commit failed: %s", err.Error()))
-			return uc.HandleError(ctx, c, merr)
-		}
+	installers := c.GetInstallers()
+	if len(installers) < 1 {
+		return uc.HandleError(ctx, c, NewTransientError(
+			errors.New("GetInstallers() returned empty list? Should not happen")))
+	}
+	err = installers[0].CommitUpdate()
+	if err != nil {
+		// we need to perform roll-back here; one scenario is when
+		// u-boot fw utils won't work after update; at this point
+		// without rolling-back it won't be possible to perform new
+		// update
+		merr := NewTransientError(errors.Errorf("update commit failed: %s", err.Error()))
+		return uc.HandleError(ctx, c, merr)
 	}
 
-	// update is commited now; do post commit-tasks
+	// Do rest of update commits now; then post commit-tasks
 	return NewUpdateAfterFirstCommitState(uc.Update()), false
 }
 
@@ -573,12 +576,21 @@ func NewUpdateAfterFirstCommitState(update *datastore.UpdateInfo) State {
 }
 
 func (uc *UpdateAfterFirstCommitState) Handle(ctx *StateContext, c Controller) (State, bool) {
-	// This state only exists to rerun Commit_Leave scripts in the event of
-	// spontaneous shutdowns, so there is nothing else to do in this state.
+	// This state exists to run Commit for payloads after the first
+	// one. After the first commit it is too late to roll back, which means
+	// that this state has both different error handling and different
+	// spontaneous reboot handling than the first commit state.
 
-	// update is commited; clean up
-	panic("TODO HERE")
-	return NewUpdateCleanupState(uc.Update(), client.StatusSuccess), false
+	for _, i := range c.GetInstallers()[1:] {
+		err := i.CommitUpdate()
+		if err != nil {
+			merr := NewTransientError(errors.Errorf("update commit failed: %s", err.Error()))
+			return uc.HandleError(ctx, c, merr)
+		}
+	}
+
+	// Move on to post-commit tasks.
+	return NewUpdateAfterCommitState(uc.Update()), false
 }
 
 func (uc *UpdateAfterFirstCommitState) HandleError(ctx *StateContext, c Controller, merr menderError) (State, bool) {

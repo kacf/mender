@@ -1182,6 +1182,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			&UpdateStoreState{},
 			&UpdateInstallState{},
 			&UpdateCommitState{},
+			&UpdateAfterFirstCommitState{},
 			&UpdateAfterCommitState{},
 			&UpdateCleanupState{},
 			&UpdateStatusReportState{},
@@ -1214,6 +1215,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			&UpdateVerifyRebootState{},
 			&UpdateAfterRebootState{},
 			&UpdateCommitState{},
+			&UpdateAfterFirstCommitState{},
 			&UpdateAfterCommitState{},
 			&UpdateCleanupState{},
 			&UpdateStatusReportState{},
@@ -1248,6 +1250,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			&UpdateVerifyRebootState{},
 			&UpdateAfterRebootState{},
 			&UpdateCommitState{},
+			&UpdateAfterFirstCommitState{},
 			&UpdateAfterCommitState{},
 			&UpdateCleanupState{},
 			&UpdateStatusReportState{},
@@ -1368,7 +1371,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in ArtifactInstall state",
+		caseName: "Error in ArtifactInstall",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1396,7 +1399,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in ArtifactInstall state",
+		caseName: "Killed in ArtifactInstall",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1424,7 +1427,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in ArtifactReboot state",
+		caseName: "Error in ArtifactReboot",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1461,7 +1464,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in ArtifactReboot state",
+		caseName: "Killed in ArtifactReboot",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1470,6 +1473,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			&UpdateVerifyRebootState{},
 			&UpdateAfterRebootState{},
 			&UpdateCommitState{},
+			&UpdateAfterFirstCommitState{},
 			&UpdateAfterCommitState{},
 			&UpdateCleanupState{},
 			&UpdateStatusReportState{},
@@ -1495,7 +1499,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in ArtifactVerifyReboot state",
+		caseName: "Error in ArtifactVerifyReboot",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1534,7 +1538,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in ArtifactVerifyReboot state",
+		caseName: "Killed in ArtifactVerifyReboot",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1573,7 +1577,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in ArtifactRollback state",
+		caseName: "Error in ArtifactRollback",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1607,7 +1611,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in ArtifactRollback state",
+		caseName: "Killed in ArtifactRollback",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1649,7 +1653,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in ArtifactRollbackReboot state",
+		caseName: "Error in ArtifactRollbackReboot",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1688,7 +1692,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in ArtifactRollbackReboot state",
+		caseName: "Killed in ArtifactRollbackReboot",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1728,7 +1732,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in ArtifactVerifyRollbackReboot state",
+		caseName: "Error in ArtifactVerifyRollbackReboot",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1771,7 +1775,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in ArtifactVerifyRollbackReboot state",
+		caseName: "Killed in ArtifactVerifyRollbackReboot",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1813,17 +1817,12 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in ArtifactFailure state",
+		caseName: "Error in ArtifactFailure",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
 			&UpdateInstallState{},
-			&UpdateRebootState{},
-			&UpdateVerifyRebootState{},
 			&UpdateRollbackState{},
-			&UpdateRollbackRebootState{},
-			&UpdateVerifyRollbackRebootState{},
-			&UpdateAfterRollbackRebootState{},
 			&UpdateErrorState{},
 			&UpdateCleanupState{},
 			&UpdateStatusReportState{},
@@ -1833,36 +1832,25 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			"Download",
 			"SupportsRollback",
 			"ArtifactInstall",
-			"NeedsArtifactReboot",
-			"ArtifactReboot",
-			"ArtifactVerifyReboot",
 			"ArtifactRollback",
-			"ArtifactRollbackReboot",
-			"ArtifactVerifyRollbackReboot",
 			"ArtifactFailure",
 			"Cleanup",
 		},
 		reportsLog: []string{
 			"downloading",
 			"installing",
-			"rebooting",
 			"failure",
 		},
-		errorStates: []string{"ArtifactVerifyReboot", "ArtifactFailure"},
+		errorStates: []string{"ArtifactInstall", "ArtifactFailure"},
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in ArtifactFailure state",
+		caseName: "Killed in ArtifactFailure",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
 			&UpdateInstallState{},
-			&UpdateRebootState{},
-			&UpdateVerifyRebootState{},
 			&UpdateRollbackState{},
-			&UpdateRollbackRebootState{},
-			&UpdateVerifyRollbackRebootState{},
-			&UpdateAfterRollbackRebootState{},
 			&UpdateErrorState{},
 			&UpdateErrorState{},
 			&UpdateCleanupState{},
@@ -1873,12 +1861,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			"Download",
 			"SupportsRollback",
 			"ArtifactInstall",
-			"NeedsArtifactReboot",
-			"ArtifactReboot",
-			"ArtifactVerifyReboot",
 			"ArtifactRollback",
-			"ArtifactRollbackReboot",
-			"ArtifactVerifyRollbackReboot",
 			"ArtifactFailure",
 			"ArtifactFailure",
 			"Cleanup",
@@ -1886,15 +1869,14 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 		reportsLog: []string{
 			"downloading",
 			"installing",
-			"rebooting",
 			"failure",
 		},
-		errorStates: []string{"ArtifactVerifyReboot"},
+		errorStates: []string{"ArtifactInstall"},
 		spontRebootStates: []string{"ArtifactFailure"},
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in Cleanup state",
+		caseName: "Error in Cleanup",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1933,7 +1915,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in Cleanup state",
+		caseName: "Killed in Cleanup",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
@@ -1975,13 +1957,15 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Error in ArtifactCommit state",
+		caseName: "Error in ArtifactCommit",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
 			&UpdateInstallState{},
 			&UpdateRebootState{},
 			&UpdateVerifyRebootState{},
+			&UpdateAfterRebootState{},
+			&UpdateCommitState{},
 			&UpdateRollbackState{},
 			&UpdateRollbackRebootState{},
 			&UpdateVerifyRollbackRebootState{},
@@ -1999,7 +1983,9 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			"ArtifactReboot",
 			"ArtifactVerifyReboot",
 			"ArtifactCommit",
-			"Artifact",
+			"ArtifactRollback",
+			"ArtifactRollbackReboot",
+			"ArtifactVerifyRollbackReboot",
 			"ArtifactFailure",
 			"Cleanup",
 		},
@@ -2013,19 +1999,20 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
-		caseName: "Killed in ArtifactCommit state",
+		caseName: "Killed in ArtifactCommit",
 		stateChain: []State{
 			&UpdateFetchState{},
 			&UpdateStoreState{},
 			&UpdateInstallState{},
 			&UpdateRebootState{},
 			&UpdateVerifyRebootState{},
+			&UpdateAfterRebootState{},
+			&UpdateCommitState{},
 			&UpdateRollbackState{},
 			&UpdateRollbackRebootState{},
 			&UpdateVerifyRollbackRebootState{},
 			&UpdateAfterRollbackRebootState{},
 			&UpdateErrorState{},
-			&UpdateCleanupState{},
 			&UpdateCleanupState{},
 			&UpdateStatusReportState{},
 			&IdleState{},
@@ -2037,11 +2024,11 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			"NeedsArtifactReboot",
 			"ArtifactReboot",
 			"ArtifactVerifyReboot",
+			"ArtifactCommit",
 			"ArtifactRollback",
 			"ArtifactRollbackReboot",
 			"ArtifactVerifyRollbackReboot",
 			"ArtifactFailure",
-			"Cleanup",
 			"Cleanup",
 		},
 		reportsLog: []string{
@@ -2050,8 +2037,7 @@ var stateTransitionsWithUpdateModulesTestCases []stateTransitionsWithUpdateModul
 			"rebooting",
 			"failure",
 		},
-		errorStates: []string{"ArtifactVerifyReboot"},
-		spontRebootStates: []string{"Cleanup"},
+		spontRebootStates: []string{"ArtifactCommit"},
 	},
 
 	stateTransitionsWithUpdateModulesTestCase{
@@ -2285,6 +2271,10 @@ func TestStateTransitionsWithUpdateModules(t *testing.T) {
 
 			killCount := 0
 			for {
+				{
+					output, _ := exec.Command("cat", path.Join(tmpdir, "modules", "test-type")).CombinedOutput()
+					log.Error(string(output))
+				}
 				cmd := exec.Command(os.Args[0], os.Args[1:]...)
 				cmd.Env = env
 				output, err := cmd.CombinedOutput()
@@ -2307,7 +2297,7 @@ func TestStateTransitionsWithUpdateModules(t *testing.T) {
 
 			logContent := make([]byte, 10000)
 
-			log, err := os.Open(path.Join(tmpdir, "module.log"))
+			log, err := os.Open(path.Join(tmpdir, "states.log"))
 			require.NoError(t, err)
 			n, err := log.Read(logContent)
 			require.NoError(t, err)
@@ -2389,6 +2379,22 @@ func makeTestUpdateModule(t *testing.T, path, logPath string,
 echo "$1" >> %s
 `, logPath)))
 
+	fd.Write([]byte("if [ \"$1\" = \"SupportsRollback\" ]; then\n"))
+	if c.rollbackDisabled {
+		fd.Write([]byte("echo No\n"))
+	} else {
+		fd.Write([]byte("echo Yes\n"))
+	}
+	fd.Write([]byte("fi\n"))
+
+	fd.Write([]byte("if [ \"$1\" = \"NeedsArtifactReboot\" ]; then\n"))
+	if c.rebootDisabled {
+		fd.Write([]byte("echo No\n"))
+	} else {
+		fd.Write([]byte("echo Yes\n"))
+	}
+	fd.Write([]byte("fi\n"))
+
 	// Kill parent (mender) in specified state
 	for _, state := range c.spontRebootStates {
 		s := fmt.Sprintf("if [ \"$1\" = \"%s\" ]; then\n", state)
@@ -2429,41 +2435,103 @@ echo "$1" >> %s
 		fd.Write([]byte("fi\n"))
 	}
 
-	fd.Write([]byte("if [ \"$1\" = \"SupportsRollback\" ]; then\n"))
-	if c.rollbackDisabled {
-		fd.Write([]byte("echo No\n"))
-	} else {
-		fd.Write([]byte("echo Yes\n"))
-	}
-	fd.Write([]byte("fi\n"))
-
-	fd.Write([]byte("if [ \"$1\" = \"NeedsArtifactReboot\" ]; then\n"))
-	if c.rebootDisabled {
-		fd.Write([]byte("echo No\n"))
-	} else {
-		fd.Write([]byte("echo Yes\n"))
-	}
-	fd.Write([]byte("fi\n"))
-
 	fd.Write([]byte("exit 0\n"))
+}
+
+func stateInList(state string, list []string) bool {
+	for _, s := range list {
+		if s == state {
+			return true
+		}
+	}
+	return false
+}
+
+func makeTestArtifactScripts(t *testing.T,
+	c *stateTransitionsWithUpdateModulesTestCase,
+	tmpdir, logPath string) artifact.Scripts {
+
+	var allScripts artifact.Scripts
+
+	stateScriptList := []string{
+		"ArtifactInstall",
+		"ArtifactReboot",
+		"ArtifactCommit",
+		"ArtifactRollback",
+		"ArtifactRollbackReboot",
+		"ArtifactFailure",
+	}
+
+	scriptsDir := path.Join(tmpdir, "scripts")
+	require.NoError(t, os.MkdirAll(scriptsDir, 0755))
+
+	for _, state := range stateScriptList {
+		for _, enterLeave := range []string{"Enter", "Leave"} {
+			script := fmt.Sprintf("%s_%s", state, enterLeave)
+			scriptFile := fmt.Sprintf("%s_%s_00", state, enterLeave)
+			scriptPath := path.Join(scriptsDir, scriptFile)
+			require.NoError(t, allScripts.Add(scriptPath))
+
+			fd, err := os.OpenFile(scriptPath, os.O_WRONLY | os.O_CREATE | os.O_TRUNC, 0755)
+			require.NoError(t, err)
+			defer fd.Close()
+
+			fd.Write([]byte("#!/bin/bash\n"))
+			fd.Write([]byte(fmt.Sprintf("echo %s >> %s\n",
+				scriptFile, logPath)))
+
+			if !c.errorForever {
+				fd.Write([]byte(fmt.Sprintf("if [ ! -e \"%s/%s.already-errored\" ]; then\n",
+					tmpdir, scriptFile)))
+				fd.Write([]byte(fmt.Sprintf("touch \"%s/%s.already-errored\"\n",
+					tmpdir, scriptFile)))
+			}
+			if stateInList(script, c.errorStates) {
+				fd.Write([]byte("exit 1\n"))
+			}
+			if !c.errorForever {
+				fd.Write([]byte("fi\n"))
+			}
+
+			if !c.spontRebootForever {
+				fd.Write([]byte(fmt.Sprintf("if [ ! -e \"%s/%s_%s.already-killed\" ]; then\n",
+					tmpdir, script, enterLeave)))
+				fd.Write([]byte(fmt.Sprintf("touch \"%s/%s_%s.already-killed\"\n",
+					tmpdir, script, enterLeave)))
+			}
+			if stateInList(script, c.spontRebootStates) {
+				fd.Write([]byte("kill -9 $PPID\n"))
+			}
+			if !c.spontRebootForever {
+				fd.Write([]byte("fi\n"))
+			}
+
+			fd.Write([]byte("exit 0\n"))
+		}
+	}
+
+	return allScripts
 }
 
 func updateModulesSetup(t *testing.T,
 	c *stateTransitionsWithUpdateModulesTestCase,
 	tmpdir string) {
 
+	logPath := path.Join(tmpdir, "states.log")
+
 	require.NoError(t, os.MkdirAll(path.Join(tmpdir, "var/lib/mender"), 0755))
 	require.NoError(t, os.MkdirAll(path.Join(tmpdir, "etc/mender"), 0755))
 
+	scripts := makeTestArtifactScripts(t, c, tmpdir, logPath)
+
 	artPath := path.Join(tmpdir, "artifact.mender")
-	require.NoError(t, makeImageForUpdateModules(artPath))
+	require.NoError(t, makeImageForUpdateModules(artPath, scripts))
 
 	require.NoError(t, os.Mkdir(path.Join(tmpdir, "logs"), 0755))
 
 	require.NoError(t, os.Mkdir(path.Join(tmpdir, "db"), 0755))
 
 	modulesPath := path.Join(tmpdir, "modules")
-	logPath := path.Join(tmpdir, "module.log")
 	require.NoError(t, os.MkdirAll(modulesPath, 0755))
 	makeTestUpdateModule(t, path.Join(modulesPath, "test-type"), logPath, c)
 
@@ -2483,6 +2551,7 @@ func updateModulesSetup(t *testing.T,
 func subProcessSetup(t *testing.T,
 	tmpdir string) (*StateContext, *menderWithCustomUpdater) {
 
+	store.LmdbNoSync = true
 	store := store.NewDBStore(path.Join(tmpdir, "db"))
 
 	ctx := StateContext{
@@ -2531,7 +2600,7 @@ func subProcessSetup(t *testing.T,
 	return &ctx, &controller
 }
 
-func makeImageForUpdateModules(path string) error {
+func makeImageForUpdateModules(path string, scripts artifact.Scripts) error {
 	depends := artifact.ArtifactDepends{
 		CompatibleDevices: []string{"test-device"},
 	}
@@ -2550,7 +2619,7 @@ func makeImageForUpdateModules(path string) error {
 		Devices:           []string{"test-device"},
 		Name:              "test-name",
 		Updates:           &upd,
-		Scripts:           &artifact.Scripts{},
+		Scripts:           &scripts,
 		Depends:           &depends,
 		Provides:          &provides,
 		TypeInfoV3:        &typeInfoV3,

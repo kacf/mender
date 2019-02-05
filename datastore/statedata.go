@@ -68,8 +68,10 @@ const (
 	MenderStateUpdateVerify
 	// commit needed
 	MenderStateUpdateCommit
-	// commit is finished
+	// first commit is finished
 	MenderStateUpdateAfterFirstCommit
+	// all commits are finished
+	MenderStateUpdateAfterCommit
 	// status report
 	MenderStateUpdateStatusReport
 	// wait before retrying sending either report or deployment logs
@@ -116,6 +118,7 @@ var (
 		MenderStateUpdateVerify:         "update-verify",
 		MenderStateUpdateCommit:         "update-commit",
 		MenderStateUpdateAfterFirstCommit: "update-after-first-commit",
+		MenderStateUpdateAfterCommit:    "update-after-commit",
 		MenderStateUpdateStatusReport:   "update-status-report",
 		MenderStatusReportRetryState:    "update-retry-report",
 		MenderStateReportStatusError:    "status-report-error",

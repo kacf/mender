@@ -404,6 +404,15 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	// check last known state
 	switch sd.Name {
 
+	// The update never got a chance to even start. Go straight to Idle
+	// state, and it will be picked up again at the next polling interval.
+	case datastore.MenderStateUpdateFetch:
+		err := RemoveStateData(ctx.store)
+		if err != nil {
+			return NewErrorState(NewFatalError(err)), false
+		}
+		return idleState, false
+
 	// Go straight to cleanup if we rebooted from Download state. This is
 	// important so that artifact scripts from that state do not get to run,
 	// since they have not yet been signature checked.
@@ -1064,9 +1073,15 @@ type UpdateCleanupState struct {
 }
 
 func NewUpdateCleanupState(update *datastore.UpdateInfo, status string) State {
+	var transition Transition
+	if status == client.StatusSuccess {
+		transition = ToNone
+	} else {
+		transition = ToError
+	}
 	return &UpdateCleanupState{
 		updateState: NewUpdateState(datastore.MenderStateUpdateCleanup,
-			ToNone, update),
+			transition, update),
 		status: status,
 	}
 }
@@ -1472,7 +1487,7 @@ type UpdateVerifyRollbackRebootState struct {
 func NewUpdateVerifyRollbackRebootState(update *datastore.UpdateInfo) State {
 	return &UpdateVerifyRollbackRebootState{
 		updateState: NewUpdateState(datastore.MenderStateVerifyRollbackReboot,
-			ToArtifactReboot_Leave, update),
+			ToArtifactRollbackReboot_Leave, update),
 	}
 }
 
@@ -1576,7 +1591,7 @@ func StoreStateData(dbStore store.Store, sd datastore.StateData) error {
 // This number should be kept quite a lot higher than the number of expected
 // state storage operations, which is usually roughly equivalent to the number
 // of state transitions.
-const maximumStateDataStoreCount int = 50
+const maximumStateDataStoreCount int = 30
 
 // Special kind of error: When this error is returned by LoadStateData, the
 // StateData will also be valid, and can be used to handle the error.

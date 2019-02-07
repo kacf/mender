@@ -16,6 +16,7 @@ package main
 import (
 	"strings"
 
+	"github.com/mendersoftware/log"
 	"github.com/mendersoftware/mender/client"
 	"github.com/mendersoftware/mender/statescript"
 	"github.com/mendersoftware/mender/store"
@@ -110,6 +111,7 @@ func (t Transition) Enter(exec statescript.Executor, report *client.StatusReport
 }
 
 func (t Transition) Leave(exec statescript.Executor, report *client.StatusReportWrapper, store store.Store) error {
+	log.Errorf("HERE %v", t)
 	if t == ToNone {
 		return nil
 	}

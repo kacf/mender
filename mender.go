@@ -615,10 +615,6 @@ func transitionState(to State, ctx *StateContext, c Controller) (State, bool) {
 		from.Id(), from.Transition().String(),
 		to.Id(), to.Transition().String())
 
-	if to.Transition() == ToNone {
-		to.SetTransition(from.Transition())
-	}
-
 	var report *client.StatusReportWrapper
 	if shouldReportUpdateStatus(to.Id()) {
 		upd, err := getUpdateFromState(to)

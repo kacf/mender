@@ -127,9 +127,19 @@ though that may not be the original order in the Artifact.
 
 Unless all modules responded `No` in the `NeedsArtifactReboot` query, the
 `ArtifactReboot` state executes after `ArtifactInstall`. Inside this state it is
-permitted to call commands that reboot the system. If this happens, execution
-will continue at the next update module's `ArtifactReboot` (it will not be
-repeated for the one that called the reboot command).
+permitted to call commands that reboot the system. However, if this happens,
+execution will resume in the `ArtifactVerifyReboot` state, not the
+`ArtifactReboot` state. Therefore it is possible for some update modules'
+`ArtifactReboot` states not to run, if an earlier update module's
+`ArtifactReboot` state caused the system to reboot. To make sure this doesn't
+cause problems, one of the following conditions should always be true:
+
+* There is only payload in the artifact
+* All payloads just require a simple system reboot, with no reboots of
+  peripheral devices
+* All payloads reboot only peripheral devices, not the host system
+* If there is a mix, all payloads that want to reboot the host system respond
+  `Automatic` to the `NeedsArtifactReboot` query
 
 If all update modules in the Artifact returned `No`, then the state scripts
 associated with this state, if any, will not run either.
@@ -184,8 +194,9 @@ where the module can respond with the following responses:
 * `No` - Signals that the update module does not support rollback. This is the
   same as responding with nothing, and hence the default
 * `Yes` **[Unimplemented]** - Signals that the update module supports rollback
-  and it should be handled by calling `ArtifactRollback` and
-  `ArtifackRollbackReboot` states
+  and it should be handled by calling `ArtifactRollback` and possibly
+  `ArtifackRollbackReboot` states (if the update module requested reboot in the
+  `NeedsArtifactReboot` query)
 * `AutomaticDualRootfs` **[Unimplemented]** - Will use the built-in dual rootfs
   capability of Mender to provide a backup of the currently running system,
   hence providing a system that can be rolled back to. The module will not be
@@ -204,7 +215,7 @@ where the module can respond with the following responses:
 
 * the `SupportsRollback` call has returned a non-`No` response
   * For `AutomaticDualRootfs`, only Mender's internal variants are called
-* `ArtifactInstall` has executed successfully
+* `ArtifactInstall` has executed
 * `ArtifactReboot`, `ArtifactVerifyReboot` or `ArtifactCommit` fails
 
 It should be used to roll back to the previously installed software, either by
@@ -713,8 +724,8 @@ transformation that needs to be verified with a checksum.
 Future possibilities
 ====================
 
-Her are described some things that have not been planned in detail, but that may
-be considered in the future.
+Here are described some things that have not been planned in detail, but that
+may be considered in the future.
 
 
 Verification command

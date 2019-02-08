@@ -59,6 +59,8 @@ const (
 	MenderStateUpdateFetch
 	// update store
 	MenderStateUpdateStore
+	// after update store (Download_Leave)
+	MenderStateUpdateAfterStore
 	// install update
 	MenderStateUpdateInstall
 	// wait before retrying fetch & install after first failing (timeout,
@@ -113,6 +115,7 @@ var (
 		MenderStateUpdateCheck:          "update-check",
 		MenderStateUpdateFetch:          "update-fetch",
 		MenderStateUpdateStore:          "update-store",
+		MenderStateUpdateAfterStore:     "update-after-store",
 		MenderStateUpdateInstall:        "update-install",
 		MenderStateFetchStoreRetryWait:  "fetch-install-retry-wait",
 		MenderStateUpdateVerify:         "update-verify",

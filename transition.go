@@ -42,7 +42,8 @@ const (
 	ToIdle
 	ToSync
 	ToError
-	ToDownload
+	ToDownload_Enter
+	ToDownload_Leave
 	ToArtifactInstall
 	// should have Enter and Error actions
 	ToArtifactReboot_Enter
@@ -64,7 +65,8 @@ var (
 		ToIdle:                         "Idle",
 		ToSync:                         "Sync",
 		ToError:                        "Error",
-		ToDownload:                     "Download",
+		ToDownload_Enter:               "Download_Enter",
+		ToDownload_Leave:               "Download_Leave",
 		ToArtifactInstall:              "ArtifactInstall",
 		ToArtifactReboot_Enter:         "ArtifactReboot_Enter",
 		ToArtifactReboot_Leave:         "ArtifactReboot_Leave",
@@ -88,9 +90,7 @@ func ignoreErrors(t Transition, action string) bool {
 		t == ToArtifactRollback ||
 		t == ToArtifactRollbackReboot_Enter ||
 		t == ToArtifactRollbackReboot_Leave ||
-		t == ToArtifactFailure ||
-		// for now just ignore ArtifactCommit.Leave errors
-		t == ToArtifactCommit_Leave
+		t == ToArtifactFailure
 }
 
 // Transition implements statescript.Launcher interface

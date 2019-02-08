@@ -135,7 +135,7 @@ func TestTransitions(t *testing.T) {
 			expectedS: &ErrorState{},
 		},
 		{from: &testState{t: ToSync, shouldErrorLeave: true},
-			to:        &testState{t: ToDownload, next: initState},
+			to:        &testState{t: ToDownload_Enter, next: initState},
 			expectedT: []stateScript{{"Sync", "Leave"}},
 			expectedS: &ErrorState{},
 		},

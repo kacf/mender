@@ -416,7 +416,9 @@ func (i *InitState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	// Go straight to cleanup if we rebooted from Download state. This is
 	// important so that artifact scripts from that state do not get to run,
 	// since they have not yet been signature checked.
-	case datastore.MenderStateUpdateStore:
+	case datastore.MenderStateUpdateStore,
+		datastore.MenderStateUpdateAfterStore:
+
 		return NewUpdateCleanupState(&sd.UpdateInfo, client.StatusFailure), false
 
 	// After reboot into new update.
@@ -606,7 +608,7 @@ func (uc *UpdateAfterFirstCommitState) HandleError(ctx *StateContext, c Controll
 	log.Error(merr.Error())
 
 	// Too late to back out now. Just report the error, but do not try to roll back.
-	return NewUpdateStatusReportState(uc.Update(), client.StatusFailure), false
+	return NewUpdateCleanupState(uc.Update(), client.StatusFailure), false
 }
 
 type UpdateAfterCommitState struct {
@@ -632,7 +634,7 @@ func (uc *UpdateAfterCommitState) HandleError(ctx *StateContext, c Controller, m
 	log.Error(merr.Error())
 
 	// Too late to back out now. Just report the error, but do not try to roll back.
-	return NewUpdateStatusReportState(uc.Update(), client.StatusFailure), false
+	return NewUpdateCleanupState(uc.Update(), client.StatusFailure), false
 }
 
 type UpdateCheckState struct {
@@ -671,7 +673,7 @@ func NewUpdateFetchState(update *datastore.UpdateInfo) State {
 	return &UpdateFetchState{
 		baseState: baseState{
 			id: datastore.MenderStateUpdateFetch,
-			t:  ToDownload,
+			t:  ToDownload_Enter,
 		},
 		update: *update,
 	}
@@ -704,19 +706,15 @@ func (uf *UpdateFetchState) Update() *datastore.UpdateInfo {
 }
 
 type UpdateStoreState struct {
-	baseState
-	update datastore.UpdateInfo
+	*updateState
 	// reader for obtaining image data
 	imagein io.ReadCloser
 }
 
 func NewUpdateStoreState(in io.ReadCloser, update *datastore.UpdateInfo) State {
 	return &UpdateStoreState{
-		baseState{
-			id: datastore.MenderStateUpdateStore,
-			t:  ToDownload,
-		},
-		*update,
+		NewUpdateState(datastore.MenderStateUpdateStore,
+			ToDownload_Enter, update),
 		in,
 	}
 }
@@ -808,11 +806,33 @@ func (u *UpdateStoreState) Handle(ctx *StateContext, c Controller) (State, bool)
 		return NewUpdateErrorState(merr, &u.update), false
 	}
 
-	return NewUpdateInstallState(&u.update), false
+	return NewUpdateAfterStoreState(&u.update), false
 }
 
-func (us *UpdateStoreState) Update() *datastore.UpdateInfo {
-	return &us.update
+func (is *UpdateStoreState) HandleError(ctx *StateContext, c Controller, merr menderError) (State, bool) {
+	log.Error(merr.Error())
+	return NewUpdateCleanupState(is.Update(), client.StatusFailure), false
+}
+
+type UpdateAfterStoreState struct {
+	*updateState
+}
+
+func NewUpdateAfterStoreState(update *datastore.UpdateInfo) State {
+	return &UpdateAfterStoreState{
+		updateState: NewUpdateState(datastore.MenderStateUpdateAfterStore,
+			ToDownload_Leave, update),
+	}
+}
+
+func (s *UpdateAfterStoreState) Handle(ctx *StateContext, c Controller) (State, bool) {
+	// This state only exists to run Download_Leave.
+	return NewUpdateInstallState(s.Update()), false
+}
+
+func (s *UpdateAfterStoreState) HandleError(ctx *StateContext, c Controller, merr menderError) (State, bool) {
+	log.Error(merr.Error())
+	return NewUpdateCleanupState(s.Update(), client.StatusFailure), false
 }
 
 type UpdateInstallState struct {
@@ -890,9 +910,9 @@ func NewFetchStoreRetryState(from State, update *datastore.UpdateInfo,
 	return &FetchStoreRetryState{
 		baseState: baseState{
 			id: datastore.MenderStateFetchStoreRetryWait,
-			t: ToDownload,
+			t: ToDownload_Enter,
 		},
-		WaitState: NewWaitState(datastore.MenderStateFetchStoreRetryWait, ToDownload),
+		WaitState: NewWaitState(datastore.MenderStateFetchStoreRetryWait, ToDownload_Enter),
 		from:      from,
 		update:    *update,
 		err:       err,

@@ -87,15 +87,13 @@ func (mod *ModuleInstaller) callModule(state string, capture bool) (string, erro
 	log.Infof("Calling module: %s %s %s", mod.programPath, state, payloadPath)
 	cmd := exec.Command(mod.programPath, state, payloadPath)
 	cmd.Dir = mod.payloadPath()
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return "", err
-	}
-	err = cmd.Start()
+
+	stdoutLogger := newReadLogger(capture)
+	stderrLogger := newReadLogger(false)
+	cmd.Stdout = stdoutLogger
+	cmd.Stderr = stderrLogger
+
+	err := cmd.Start()
 	if err != nil {
 		log.Errorf("Could not execute update module: %s", err.Error())
 		return "", err
@@ -105,21 +103,38 @@ func (mod *ModuleInstaller) callModule(state string, capture bool) (string, erro
 	killer := newDelayKiller(cmd.Process, 2 * time.Minute, 3 * time.Minute)
 	defer killer.Stop()
 
-	// Log stderr in background.
-	go mod.readAndLog(stderrPipe, false)
-
-	// Log stdout in foreground. Both should get their pipes closed
-	// simultaneously.
-	output, err := mod.readAndLog(stdoutPipe, capture)
-	if err != nil {
-		return output, err
-	}
-
 	err = cmd.Wait()
 	if err != nil {
 		log.Errorf("Update module returned error: %s", err.Error())
 	}
-	return output, err
+
+	return stdoutLogger.output, err
+}
+
+type ReadLogger struct {
+	output  string
+	capture bool
+}
+
+func newReadLogger(capture bool) *ReadLogger {
+	return &ReadLogger{
+		output:  "",
+		capture: capture,
+	}
+}
+
+func (rl *ReadLogger) Write(p []byte) (int, error) {
+
+	line := string(p)
+	line = strings.TrimRight(line, "\n")
+
+	if rl.capture {
+		log.Debugf("Update module output: %s", line)
+		rl.output = rl.output + line
+	} else {
+		log.Infof("Update module output: %s", line)
+	}
+	return len(p), nil
 }
 
 func (mod *ModuleInstaller) readAndLog(r io.ReadCloser, capture bool) (string, error) {

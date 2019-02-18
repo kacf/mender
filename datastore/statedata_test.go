@@ -1,4 +1,4 @@
-// Copyright 2017 Northern.tech AS
+// Copyright 2019 Northern.tech AS
 //
 //    Licensed under the Apache License, Version 2.0 (the "License");
 //    you may not use this file except in compliance with the License.
@@ -11,21 +11,28 @@
 //    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //    See the License for the specific language governing permissions and
 //    limitations under the License.
+package datastore
 
-package artifact
+import (
+	"encoding/json"
+	"testing"
 
-import "io"
+	"github.com/stretchr/testify/assert"
+)
 
-type Raw struct {
-	Name string
-	Size int64
-	Data io.Reader
-}
+func TestMenderState(t *testing.T) {
+	d, err := json.Marshal(MenderStateInit)
 
-func NewRaw(name string, size int64, data io.Reader) *Raw {
-	return &Raw{
-		Name: name,
-		Size: size,
-		Data: data,
-	}
+	assert.Equal(t, []byte(`"init"`), d)
+	assert.NoError(t, err)
+
+	d, err = json.Marshal(MenderState(333))
+	assert.Error(t, err)
+	assert.Empty(t, d)
+
+	var s MenderState
+	err = json.Unmarshal([]byte(`"init"`), &s)
+
+	assert.NoError(t, err)
+	assert.Equal(t, MenderStateInit, s)
 }

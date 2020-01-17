@@ -60,12 +60,12 @@ func TestHttpClient(t *testing.T) {
 	cl, _ = NewApiClient(Config{})
 	assert.NotNil(t, cl)
 
-	// missing cert in config should yield an error
+	// missing cert in config should still yield usable client
 	cl, err := NewApiClient(
 		Config{"missing.crt", true, false},
 	)
-	assert.Nil(t, cl)
-	assert.NotNil(t, err)
+	assert.NotNil(t, cl)
+	assert.NoError(t, err)
 }
 
 func TestApiClientRequest(t *testing.T) {

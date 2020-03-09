@@ -50,56 +50,33 @@ section](#signatures-and-augmented-artifacts).
 ### Full vs partial updates
 
 The Mender client can store information about individual software components in
-the `artifact_provides` values of the system, under a special prefix
-`mender_software_version_`. For example, let's say you have a base rootfs image
-with the name "myrootfs-1.0". In addition, you have an updatable app on top of
-it, called "myapp-3.0", which is distributed with the "directory" Update
-Module. Then you might have these `artifact_provides` values stored:
+the `artifact_provides` structure. In this structure, the Artifact can carry any
+information it has about things that the artifact provides. In principle this
+can be anything, but typical uses is for groups of updates (`artifact_group`),
+properties of the update (for example a checksum of a R/O filesystem), or names
+of specific components inside the update.
+
+Although not enforced in any way, convention in Mender is for Update Modules to
+use `<MODULE>.<PARAMETER>` keys so that their provides are namespaced under
+their own name. It is also convention to let `<MODULE>.software_name` correspond
+to the name of the software that is installed by `<MODULE>`, which is often, but
+not always, the name of an Update Module. This can be used to for example have
+these two installed at the same time:
 
 ```
 "artifact_provides": {
-    "mender_software_version_rootfs-image": "myrootfs-1.0",
-    "mender_software_version_directory": "myapp-3.0"
+    "artifact_name": "myapp-1.1",
+    "rootfs-image.software_name: "original-rootfs",
+    "single-file.software_name": "myapp-1.1"
 }
 ```
 
-Note that the name following the `mender_software_version_` prefix does not need
-to be the name of the Update Module, this is just a convenient
-default. `mender-artifact` will use this as a default `artifact_provides` field
-when making an artifact, unless a different one is specified. See the
-`mender-artifact` help screen for information about this.
-
-When making a new rootfs deployment, it is natural that the version of "myapp"
-is either updated or removed, since it is unlikely to be correct anymore after
-the entire system has been updated with a rootfs. If the artifact comes with a
-new `mender_software_version_directory` value in it, then this is already
-handled. But if it does not, then this entry should be cleared.
-
-And conversely, if making a new deployment of "myapp", it is natural that the
-"myrootfs" value stays, since the base rootfs version is still the same.
-
-In addition to this, it may be natural to group certain things together. For
-example, if there are two separate apps, one on the root filesystem, and one
-standalone app on the data partition, then they could be grouped like this:
-
-```
-"artifact_provides": {
-    "mender_software_version_rootfs-image": "myrootfs-1.0",
-    "mender_software_version_rootfs-image.rootfs-app": "rootfs-app-2.0",
-    "mender_software_version_data-app": "data-app-3.0",
-}
-```
-
-In this example the "directory" namespace has been replaced with the more
-specific "data-app" namespace, but it is in principle the same
-thing. "rootfs-app" however, lives as a sub namespace of "rootfs-image", since
-it lives on the rootfs partition. It is natural that when the rootfs is updated,
-this value would be updated or cleared.
-
-Distinguishing between these behaviors is what this section is about. The Update
-Module API call `PerformsFullUpdate` decides what to do with existing
-`artifact_provides` values in the `mender_software_version_` namespace, when the
-artifact does not specify it.
+It is important that these `artifact_provides` values are updated correctly when
+installing a new Artifact. Some values may be appropriate to keep, and some
+not. Making this decision is what this section is about. For `artifact_provides`
+that are contained in the Artifact, the decision is simple: store the new
+value. For existing values that do not come with the Artifact, the Update Module
+API calls `PerformsFullUpdate` to decide what to do with them.
 
 Mender calls the Update Module like this:
 
@@ -114,13 +91,11 @@ with zero status code:
   `artifact_provides` fields will be changed other than the ones that come with
   the artifact.
 
-* `ClearsSoftware=<WILDCARD>` - The update is a partial update which should
-  clear some, but not all of the `mender_software_version_` fields inside
-  `artifact_provides`. For example, a wildcard of `rootfs-image.*` would clear
-  all `artifact_provides` keys matching
-  `mender_software_version_rootfs-image.*`, glob-style. Note that the
-  `mender_software_version_` prefix should **not** be included in the wildcard
-  printed by the module, and no quotes should be used after the `=` sign.
+* `ClearsArtifactProvides=<WILDCARD>` - The update is a partial update which
+  should clear some, but not all of the `artifact_provides` fields. For example,
+  a wildcard of `rootfs-image.*` would clear all `artifact_provides` keys
+  matching `rootfs-image.*`, glob-style. No quotes should be used after the `=`
+  sign.
 
   This line may be printed **multiple times** in order match multiple
   expressions.
@@ -129,15 +104,40 @@ with zero status code:
   logic is as follows:
 
   1. If the Update Module payload comes with a meta-data section, and this
-     section contains a top level key `mender_software_version_clears`, then the
+     section contains a top level key `clears_artifact_provides`, then the
      single string, or the list of strings, defined by it, represents wildcards
-     to clear, just as for the previous `ClearsSoftware` response.
+     to clear, just as for the previous `ClearsArtifactProvides` response.
 
-  2. If there is no such meta-data key, then `Auto` acts as if this had been
-     returned instead:
+  2. If there is no such meta-data key, but there is at least one
+     `artifact_provide` that ends with `.software_name`, then `Auto` acts as if
+     this had been returned instead:
 
      ```
-     ClearsSoftware=<MODULE>.*
+     ClearsArtifactProvides=<PROVIDE_PREFIX>.*
+     ```
+
+     where `<PROVIDE_PREFIX>` is the string preceding `.software_name` in the
+     `artifact_provides` keys found in the Artifact. Since there may be multiple
+     of these, this may return multiple `ClearsArtifactProvides` lines. For
+     example, for an Artifact with this `artifact_provide`:
+
+    ```
+    "artifact_provides": {
+        "app1.software_name": "app-name"
+    }
+    ```
+
+    the result will be:
+
+     ```
+     ClearsArtifactProvides=app1.*
+     ```
+
+  3. If there is no `artifact_provide` in the Artifact that ends with
+     `.software_name`, then `Auto` acts as if this had been returned instead:
+
+     ```
+     ClearsArtifactProvides=rootfs-image.<MODULE>.*
      ```
 
      where `<MODULE>` is the name of the Update Module handling this payload
@@ -145,14 +145,8 @@ with zero status code:
 
   `Auto` is the same as returning nothing and hence the default.
 
-* `Yes` - The update is a full update, and all `mender_software_version_` fields
-  in `artifact_provides` that are not explicitly defined in the Artifact being
-  installed, will be removed.
-
-The information from `PerformsFullUpdate` is used to report to the Mender server
-what kinds of updates are, and have been, installed on a device. When doing
-partial updates, the history of updates can be important, whereas with full
-updates, usually only the last update is important.
+* `Yes` - The update is a full update, and all `artifact_provides` fields that
+  are not explicitly defined in the Artifact being installed, will be removed.
 
 ### Regular states
 

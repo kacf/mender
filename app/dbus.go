@@ -18,6 +18,17 @@ import (
 	"github.com/godbus/dbus/v5"
 )
 
+// Some usage examples using command line:
+//
+// Monitor signals from client:
+// dbus-monitor --system type=signal,sender=com.mender.MenderClient
+//
+// Execute various commands:
+// dbus-send --system --print-reply --dest=com.mender.MenderClient /com/mender/MenderClient com.mender.Deployments.CheckForDeployment
+// dbus-send --system --print-reply --dest=com.mender.MenderClient /com/mender/MenderClient com.mender.Deployments.WaitAtArtifactReboot boolean:true
+// dbus-send --system --print-reply --dest=com.mender.MenderClient /com/mender/MenderClient com.mender.Deployments.ResumeArtifactReboot
+// dbus-send --system --print-reply --dest=com.mender.MenderClient /com/mender/MenderClient com.mender.Inventory.UpdateInventory
+
 var DbusConn *dbus.Conn
 var WaitWithReboot bool
 var GoForReboot chan bool

@@ -661,6 +661,8 @@ type updateCheckState struct {
 func (u *updateCheckState) Handle(ctx *StateContext, c Controller) (State, bool) {
 	log.Debugf("Handle update check state")
 
+	DbusConn.Emit("/com/mender/MenderClient", "com.mender.Deployments.AboutToCheckUpdate")
+
 	update, err := c.CheckUpdate()
 
 	if err != nil {
@@ -1292,6 +1294,8 @@ func (s *updateCleanupState) Handle(ctx *StateContext, c Controller) (State, boo
 		log.Errorf("Can not enable deployment logger: %s", err)
 	}
 
+	DbusConn.Emit("/com/mender/MenderClient", "com.mender.Deployments.Committed")
+
 	log.Debug("Handling Cleanup state")
 
 	var lastError error
@@ -1542,6 +1546,12 @@ func (e *updateRebootState) Handle(ctx *StateContext, c Controller) (State, bool
 	}
 
 	log.Debug("Handling reboot state")
+
+	DbusConn.Emit("/com/mender/MenderClient", "com.mender.Deployments.AboutToRunArtifactReboot")
+
+	if WaitWithReboot {
+		<-GoForReboot
+	}
 
 	merr := c.ReportUpdateStatus(e.Update(), client.StatusRebooting)
 	if merr != nil && merr.IsFatal() {

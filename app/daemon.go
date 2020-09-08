@@ -19,6 +19,8 @@ import (
 	"github.com/mendersoftware/mender/system"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/godbus/dbus/v5"
 )
 
 // Config section
@@ -64,6 +66,29 @@ func (d *MenderDaemon) shouldStop() bool {
 }
 
 func (d *MenderDaemon) Run() error {
+	var err error
+	DbusConn, err = dbus.SystemBus()
+	if err != nil {
+		return errors.Wrap(err, "Could not connect to system D-Bus")
+	}
+
+	rnr, err := DbusConn.RequestName("com.mender.MenderClient", 0)
+	if err != nil {
+		return errors.Wrap(err, "Could not request D-Bus name")
+	} else if rnr != dbus.RequestNameReplyPrimaryOwner {
+		return errors.Errorf("Could not request D-Bus name: %d", rnr)
+	}
+
+	err = DbusConn.Export(&MenderDbusDeploymentsInterface{d}, "/com/mender/MenderClient", "com.mender.Deployments")
+	if err != nil {
+		return errors.Wrap(err, "Could not export to system D-Bus")
+	}
+
+	err = DbusConn.Export(&MenderDbusInventoryInterface{d}, "/com/mender/MenderClient", "com.mender.Inventory")
+	if err != nil {
+		return errors.Wrap(err, "Could not export to system D-Bus")
+	}
+
 	// set the first state transition
 	var toState State = d.Mender.GetCurrentState()
 	cancelled := false

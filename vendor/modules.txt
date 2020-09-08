@@ -5,6 +5,9 @@ github.com/bmatsuo/lmdb-go/lmdb
 # github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc
 ## explicit
 github.com/davecgh/go-spew/spew
+# github.com/godbus/dbus/v5 v5.0.3
+## explicit
+github.com/godbus/dbus/v5
 # github.com/konsorten/go-windows-terminal-sequences v1.0.1
 github.com/konsorten/go-windows-terminal-sequences
 # github.com/mendersoftware/mender-artifact v0.0.0-20200327144921-a6d237202052
@@ -66,8 +69,6 @@ golang.org/x/text/secure/bidirule
 golang.org/x/text/transform
 golang.org/x/text/unicode/bidi
 golang.org/x/text/unicode/norm
-# gopkg.in/yaml.v2 v2.3.0
-## explicit
 # gopkg.in/yaml.v3 v3.0.0-20200615113413-eeeca48fe776
 ## explicit
 gopkg.in/yaml.v3

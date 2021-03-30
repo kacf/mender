@@ -18,9 +18,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -94,6 +97,7 @@ const (
 	demoUpdatePoll        = 5
 	demoServerCertificate = "/usr/share/doc/mender-client/examples/demo.crt"
 	hostedMenderURL       = "https://hosted.mender.io"
+	localTrustMenderPath  = "/usr/local/share/ca-certificates/mender"
 
 	// Prompt constants
 	promptWizard = "Mender Client Setup\n" +
@@ -831,6 +835,11 @@ func (opts *setupOptionsType) saveConfigOptions(
 	if opts.demo && !opts.hostedMender {
 		opts.maybeAddHostLookup()
 	}
+
+	if opts.demo && (config.ServerCertificate == demoServerCertificate) {
+		return opts.installDemoCertificateLocalTrust()
+	}
+
 	return nil
 }
 
@@ -884,4 +893,52 @@ func (opts *setupOptionsType) maybeAddHostLookup() {
 		log.Warnf("Unable to add route \"%s\" to \"/etc/hosts\": %s",
 			route, err.Error())
 	}
+}
+
+func (opts *setupOptionsType) installDemoCertificateLocalTrust() error {
+	_, err := os.Stat(demoServerCertificate)
+	if err != nil {
+			return err
+	}
+
+	s, err := os.Open(demoServerCertificate)
+	if err != nil {
+			return err
+	}
+	defer s.Close()
+
+	_, err = os.Stat(localTrustMenderPath)
+	if os.IsNotExist(err) {
+		err := os.MkdirAll(localTrustMenderPath, 0755)
+		if err != nil {
+			return errors.Wrapf(err, "Error creating "+
+				"directory %q", localTrustMenderPath)
+		}
+	}
+
+	certLocation := filepath.Join(localTrustMenderPath, "server.cert")
+	d, err := os.OpenFile(certLocation, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0755)
+	if err != nil {
+		return errors.Wrapf(err,
+			"Cannot create file: %v", certLocation)
+	}
+	defer d.Close()
+
+	_, err = io.Copy(d, s)
+	if err != nil {
+		return errors.Wrapf(err,
+			"Cannot write script file: %v", certLocation)
+	}
+	d.Sync()
+
+	cmd := exec.Command("update-ca-certificates")
+	out, err := cmd.CombinedOutput()
+
+	if err != nil {
+		errors.Wrapf(err,
+			"update-ca-certificates returned %q", out)
+		return err
+	}
+
+	return nil
 }

@@ -98,6 +98,7 @@ const (
 	demoServerCertificate = "/usr/share/doc/mender-client/examples/demo.crt"
 	hostedMenderURL       = "https://hosted.mender.io"
 	localTrustMenderPath  = "/usr/local/share/ca-certificates/mender"
+	localTrustMenderCert  = localTrustMenderPath+"server.crt"
 
 	// Prompt constants
 	promptWizard = "Mender Client Setup\n" +
@@ -916,7 +917,7 @@ func (opts *setupOptionsType) installDemoCertificateLocalTrust() error {
 		}
 	}
 
-	certLocation := filepath.Join(localTrustMenderPath, "server.cert")
+	certLocation := filepath.Join(localTrustMenderCert)
 	d, err := os.OpenFile(certLocation, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0755)
 	if err != nil {
 		return errors.Wrapf(err,

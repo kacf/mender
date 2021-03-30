@@ -31,6 +31,7 @@ import (
 	dev "github.com/mendersoftware/mender/device"
 	"github.com/mendersoftware/mender/installer"
 	"github.com/mendersoftware/mender/store"
+	sha256 "github.com/minio/sha256-simd"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/pkg/errors"
@@ -236,6 +237,8 @@ func initDaemon(config *conf.MenderConfig,
 	}
 	mp.DualRootfsDevice = dev
 
+	checkDemoCert()
+
 	controller, err := app.NewMender(config, *mp)
 	if err != nil {
 		mp.Store.Close()
@@ -256,6 +259,46 @@ func initDaemon(config *conf.MenderConfig,
 	_, _ = dbus.GetDBusAPI()
 
 	return daemon, nil
+}
+
+func checkDemoCert() {
+	trustStoreCert, err := os.Open(localTrustMenderCert)
+	if err != nil {
+		log.Debugf("Could not open Mender certificate in local trust store: %s", err.Error())
+		return
+	}
+	defer trustStoreCert.Close()
+
+	demoCert, err := os.Open(demoServerCertificate)
+	if err != nil {
+		log.Debugf("Could not open demo certificate in examples folder: %s", err.Error())
+		return
+	}
+	defer demoCert.Close()
+
+	var trustStoreSum, demoSum []byte
+	hasher := sha256.New()
+
+	_, err = io.Copy(hasher, trustStoreCert)
+	if err != nil {
+		log.Errorf("Could not obtain checksum of %s: %s", localTrustMenderCert, err.Error())
+		return
+	}
+	trustStoreSum = hasher.Sum(trustStoreSum)
+
+	hasher.Reset()
+	_, err = io.Copy(hasher, demoCert)
+	if err != nil {
+		log.Errorf("Could not obtain checksum of %s: %s", demoServerCertificate, err.Error())
+		return
+	}
+	demoSum = hasher.Sum(demoSum)
+
+	if bytes.Equal(trustStoreSum, demoSum) {
+		log.Warnf("Running with demo certificate installed in trust store. This is INSECURE! "+
+			"Please remove %s if you plan to use this device in production.",
+			localTrustMenderCert)
+	}
 }
 
 func PrintArtifactName(device *dev.DeviceManager) error {

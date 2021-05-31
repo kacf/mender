@@ -33,10 +33,7 @@ func NewSystemRebootCmd(command Commander) *SystemRebootCmd {
 }
 
 func (s *SystemRebootCmd) Reboot() error {
-	err := s.command.Command("reboot").Run()
-	if err != nil {
-		return err
-	}
+	s.command.Command("reboot").Run()
 
 	// Wait up to ten minutes for reboot to kill the client, otherwise the
 	// client may mistake a successful return code as "reboot is complete,

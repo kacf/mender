@@ -27,7 +27,7 @@ github.com/mendersoftware/mender-artifact/artifact/stage
 github.com/mendersoftware/mender-artifact/awriter
 github.com/mendersoftware/mender-artifact/handlers
 github.com/mendersoftware/mender-artifact/utils
-# github.com/mendersoftware/openssl v1.1.0
+# github.com/mendersoftware/openssl v1.1.0 => github.com/kacf/openssl v0.0.0-20220325101448-170099b90661
 ## explicit
 github.com/mendersoftware/openssl
 github.com/mendersoftware/openssl/utils
@@ -74,3 +74,4 @@ golang.org/x/term
 ## explicit
 gopkg.in/yaml.v3
 # github.com/urfave/cli/v2 => github.com/mendersoftware/cli/v2 v2.1.1-minimal
+# github.com/mendersoftware/openssl => github.com/kacf/openssl v0.0.0-20220325101448-170099b90661

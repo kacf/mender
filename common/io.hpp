@@ -187,6 +187,42 @@ public:
 		vector<uint8_t>::const_iterator start, vector<uint8_t>::const_iterator end) override;
 };
 
+enum class Append {
+	Disabled,
+	Enabled,
+};
+
+class FileDescriptorReader : virtual public Reader {
+public:
+	// Takes ownership of fd.
+	FileDescriptorReader(int fd);
+	FileDescriptorReader();
+	~FileDescriptorReader();
+
+	error::Error Open(const string &path);
+
+	ExpectedSize Read(vector<uint8_t>::iterator start, vector<uint8_t>::iterator end) override;
+
+private:
+	int fd_;
+};
+
+class FileDescriptorWriter : virtual public Writer {
+public:
+	// Takes ownership of fd.
+	FileDescriptorWriter(int fd);
+	FileDescriptorWriter();
+	~FileDescriptorWriter();
+
+	error::Error Open(const string &path, io::Append append = io::Append::Disabled);
+
+	ExpectedSize Write(
+		vector<uint8_t>::const_iterator start, vector<uint8_t>::const_iterator end) override;
+
+private:
+	int fd_;
+};
+
 } // namespace io
 } // namespace common
 } // namespace mender

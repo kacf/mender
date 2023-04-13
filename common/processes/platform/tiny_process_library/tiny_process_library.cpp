@@ -17,9 +17,25 @@
 #include <string>
 #include <string_view>
 
+#include <common/events_io.hpp>
+#include <common/io.hpp>
+
 using namespace std;
 
 namespace mender::common::processes {
+
+namespace io = mender::common::io;
+
+class ProcessReaderFunctor {
+public:
+	void operator()(const char *bytes, size_t n);
+
+	io::WriterPtr writer_;
+};
+
+Process::~Process() {
+	// TODO
+}
 
 error::Error Process::Start() {
 	proc_ = make_unique<tpl::Process>(args_, "");
@@ -96,6 +112,38 @@ ExpectedLineData Process::GenerateLineData() {
 	return ExpectedLineData(ret);
 }
 
+expected::expected<pair<io::WriterPtr, io::AsyncReaderPtr>, error::Error> Process::GetProcessReader(events::EventLoop &loop) {
+	if (proc_) {
+		return expected::unexpected(MakeError(ProcessAlreadyStartedError, "Cannot get process output"));
+	}
+
+	int fds[2];
+	int ret = pipe(fds);
+	if (ret < 0) {
+		int err = errno;
+		return expected::unexpected(error::Error(generic_category().default_error_condition(err), "Could not get process stdout reader"));
+	}
+
+	return pair<io::WriterPtr, io::AsyncReaderPtr> {
+		make_shared<io::FileDescriptorWriter>(fds[1]),
+		make_shared<events::io::AsyncFileDescriptorReader>(loop, fds[0])
+	};
+}
+
+io::ExpectedAsyncReaderPtr Process::GetAsyncStdoutReader(events::EventLoop &loop) {
+	return GetProcessReader(loop).and_then([this](pair<io::WriterPtr, io::AsyncReaderPtr> result) -> io::ExpectedAsyncReaderPtr {
+		stdout_pipe_ = result.first;
+		return result.second;
+	});
+}
+
+io::ExpectedAsyncReaderPtr Process::GetAsyncStderrReader(events::EventLoop &loop) {
+	return GetProcessReader(loop).and_then([this](pair<io::WriterPtr, io::AsyncReaderPtr> result) -> io::ExpectedAsyncReaderPtr {
+		stderr_pipe_ = result.first;
+		return result.second;
+	});
+}
+
 void Process::Terminate() {
 	if (proc_) {
 		proc_->kill(false);
@@ -106,6 +154,15 @@ void Process::Kill() {
 	if (proc_) {
 		proc_->kill(true);
 	}
+}
+
+void ProcessReaderFunctor::operator()(const char *bytes, size_t n) {
+	if (!writer_) {
+		return;
+	}
+
+	// TODO: ???
+	auto result = writer_->Write(bytes, bytes + n);
 }
 
 } // namespace mender::common::processes

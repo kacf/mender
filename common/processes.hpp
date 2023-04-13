@@ -18,12 +18,15 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <common/error.hpp>
-#include <common/expected.hpp>
 
 #ifdef MENDER_USE_TINY_PROC_LIB
 #include <process.hpp>
 #endif
+
+#include <common/error.hpp>
+#include <common/events.hpp>
+#include <common/io.hpp>
+#include <common/expected.hpp>
 
 namespace mender {
 namespace common {
@@ -36,11 +39,14 @@ namespace tpl = TinyProcessLib;
 using namespace std;
 
 namespace error = mender::common::error;
+namespace events = mender::common::events;
 namespace expected = mender::common::expected;
+namespace io = mender::common::io;
 
 enum ProcessesErrorCode {
 	NoError = 0,
 	SpawnError,
+	ProcessAlreadyStartedError,
 };
 
 class ProcessesErrorCategoryClass : public std::error_category {
@@ -59,6 +65,7 @@ class Process {
 public:
 	Process(vector<string> args) :
 		args_(args) {};
+	~Process();
 
 	error::Error Start();
 
@@ -69,12 +76,20 @@ public:
 	};
 	ExpectedLineData GenerateLineData();
 
+	io::ExpectedAsyncReaderPtr GetAsyncStdoutReader(events::EventLoop &loop);
+	io::ExpectedAsyncReaderPtr GetAsyncStderrReader(events::EventLoop &loop);
+
 	void Terminate();
 	void Kill();
 
 private:
+	expected::expected<pair<io::WriterPtr, io::AsyncReaderPtr>, error::Error> GetProcessReader(events::EventLoop &loop);
+
 #ifdef MENDER_USE_TINY_PROC_LIB
 	unique_ptr<tpl::Process> proc_;
+
+	io::WriterPtr stdout_pipe_;
+	io::WriterPtr stderr_pipe_;
 #endif
 	vector<string> args_;
 	int exit_status_ = -1;

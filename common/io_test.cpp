@@ -17,10 +17,15 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
+#include <common/path.hpp>
+#include <common/testing.hpp>
+
 using namespace std;
 
 namespace io = mender::common::io;
 namespace error = mender::common::error;
+namespace mtesting = mender::common::testing;
+namespace path = mender::common::path;
 
 namespace expected = mender::common::expected;
 
@@ -243,4 +248,34 @@ TEST(IO, TestStringReader) {
 	auto err = Copy(discard_writer, string_reader);
 
 	ASSERT_EQ(error::NoError, err);
+}
+
+TEST(IO, TestFileDescriptorReaderAndWriter) {
+	mtesting::TemporaryDirectory tmpdir;
+	io::FileDescriptorWriter w;
+
+	string tmpfile {path::Join(tmpdir.Path(), "file")};
+
+	auto err = w.Open(tmpfile);
+	ASSERT_EQ(err, error::NoError);
+
+	string dummy {"dummy"};
+	vector<uint8_t> to_send(dummy.begin(), dummy.end());
+	auto result = w.Write(to_send.begin(), to_send.end());
+	ASSERT_TRUE(result);
+	EXPECT_EQ(result.value(), 5);
+
+	io::FileDescriptorReader r;
+
+	err = r.Open(tmpfile);
+	ASSERT_EQ(err, error::NoError);
+
+	vector<uint8_t> to_receive;
+	to_receive.resize(100);
+	result = r.Read(to_receive.begin(), to_receive.end());
+	ASSERT_TRUE(result) << result.error().String();
+	EXPECT_EQ(result.value(), 5);
+
+	to_receive.resize(result.value());
+	EXPECT_EQ(to_receive, to_send);
 }

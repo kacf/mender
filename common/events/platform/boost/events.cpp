@@ -20,6 +20,8 @@ namespace mender {
 namespace common {
 namespace events {
 
+using namespace std;
+
 namespace asio = boost::asio;
 
 void EventLoop::Run() {

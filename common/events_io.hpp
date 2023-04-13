@@ -31,11 +31,7 @@ namespace io {
 using namespace std;
 
 namespace asio = boost::asio;
-
-enum class Append {
-	Disabled,
-	Enabled,
-};
+namespace io = mender::common::io;
 
 class AsyncFileDescriptorReader :
 	public EventLoopObject,
@@ -70,7 +66,7 @@ public:
 	explicit AsyncFileDescriptorWriter(events::EventLoop &loop);
 	~AsyncFileDescriptorWriter();
 
-	error::Error Open(const string &path, Append append = Append::Disabled);
+	error::Error Open(const string &path, io::Append append = io::Append::Disabled);
 
 	error::Error AsyncWrite(
 		vector<uint8_t>::const_iterator start,

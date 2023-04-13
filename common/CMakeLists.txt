@@ -6,7 +6,7 @@ add_library(common_setup STATIC setup/platform/posix/setup.cpp)
 
 add_library(common_error STATIC error.cpp)
 
-add_library(common_io STATIC io.cpp)
+add_library(common_io STATIC io.cpp io/platform/posix/io.cpp)
 
 add_library(common_path STATIC)
 if(MENDER_USE_BOOST_FS)
@@ -18,7 +18,7 @@ if(MENDER_USE_BOOST_FS)
 endif()
 
 add_executable(io_test EXCLUDE_FROM_ALL io_test.cpp)
-target_link_libraries(io_test PUBLIC common_io common_error GTest::gtest_main gmock)
+target_link_libraries(io_test PUBLIC common_io common_path common_testing common_error GTest::gtest_main gmock)
 gtest_discover_tests(io_test)
 add_dependencies(check io_test)
 

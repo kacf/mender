@@ -102,13 +102,13 @@ AsyncFileDescriptorWriter::~AsyncFileDescriptorWriter() {
 	Cancel();
 }
 
-error::Error AsyncFileDescriptorWriter::Open(const string &path, Append append) {
+error::Error AsyncFileDescriptorWriter::Open(const string &path, io::Append append) {
 	int flags = O_WRONLY | O_CREAT;
 	switch (append) {
-	case Append::Disabled:
+	case io::Append::Disabled:
 		flags |= O_TRUNC;
 		break;
-	case Append::Enabled:
+	case io::Append::Enabled:
 		flags |= O_APPEND;
 		break;
 	}

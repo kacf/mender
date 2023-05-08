@@ -15,7 +15,7 @@ require (
 	github.com/stretchr/testify v1.7.1
 	github.com/ungerik/go-sysfs v0.0.0-20190613143942-7f098ddb67a6
 	github.com/urfave/cli/v2 v2.2.0
-	golang.org/x/sys v0.0.0-20211124211545-fe61309f8881
+	golang.org/x/sys v0.8.0
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

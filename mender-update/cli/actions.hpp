@@ -33,6 +33,8 @@ error::Error ShowArtifact(context::MenderContext &main_context);
 
 error::Error ShowProvides(context::MenderContext &main_context);
 
+error::Error Install(context::MenderContext &main_context, const string &src, bool reboot_exit_code);
+
 } // namespace cli
 } // namespace update
 } // namespace mender

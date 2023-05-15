@@ -68,6 +68,9 @@ using ExpectedPayloadHeaderView = expected::expected<PayloadHeaderView, error::E
 // which is dedicated to another payload (given by it's index).
 ExpectedPayloadHeaderView View(Artifact &artifact, size_t index);
 
+json::StringVector GetArtifactProvides(const HeaderView &header);
+json::StringVector GetClearsArtifactProvides(const HeaderView &header);
+
 } // namespace artifact
 } // namespace mender
 

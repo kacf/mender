@@ -27,6 +27,7 @@ add_library(update_module STATIC
   update_module/v3/update_module_download.cpp
 )
 target_link_libraries(update_module PUBLIC
+  common
   common_log
   common_conf
   common_processes
@@ -82,7 +83,6 @@ install(TARGETS mender-update
 add_executable(update_module_test EXCLUDE_FROM_ALL update_module/v3/update_module_test.cpp)
 target_link_libraries(update_module_test PUBLIC
   update_module
-  common
   common_testing
   common_path
   common_processes

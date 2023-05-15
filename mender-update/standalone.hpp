@@ -1,0 +1,74 @@
+// Copyright 2023 Northern.tech AS
+//
+//    Licensed under the Apache License, Version 2.0 (the "License");
+//    you may not use this file except in compliance with the License.
+//    You may obtain a copy of the License at
+//
+//        http://www.apache.org/licenses/LICENSE-2.0
+//
+//    Unless required by applicable law or agreed to in writing, software
+//    distributed under the License is distributed on an "AS IS" BASIS,
+//    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//    See the License for the specific language governing permissions and
+//    limitations under the License.
+
+#ifndef MENDER_UPDATE_STANDALONE_HPP
+#define MENDER_UPDATE_STANDALONE_HPP
+
+#include <common/error.hpp>
+#include <common/expected.hpp>
+
+namespace mender {
+namespace update {
+namespace standalone {
+
+using namespace std;
+
+namespace error = mender::common::error;
+namespace expected = mender::common::expected;
+
+// The keys and data, respectively, of the JSON object living under the `standalone_data_key` entry
+// in the database. Be sure to take into account upgrades when changing this.
+struct StandaloneDataKeys {
+	static const string version;
+	static const string artifact_name;
+	static const string artifact_group;
+	static const string artifact_provides;
+	static const string artifact_clears_provides;
+	static const string payload_types;
+};
+struct StandaloneData {
+	int version;
+	string artifact_name;
+	string artifact_group;
+	unordered_map<string, string> artifact_provides;
+	vector<string> artifact_clears_provides;
+	vector<string> payload_types;
+};
+
+enum class Result {
+	InstalledAndCommitted,
+	InstalledRebootRequired,
+	Committed,
+	FailedNothingDone,
+	FailedAndRolledBack,
+	FailedAndNoRollback,
+};
+
+struct ResultAndError {
+	Result result;
+	error::Error err;
+};
+
+// Return true if there is standalone data (indicating that an update is in progress), false if not.
+// Note: StandaloneData is expected to be empty. IOW it will not clear fields that happen to be
+// empty in the database.
+expected::ExpectedBool LoadStandaloneData(database::KeyValueDatabase &db, StandaloneData &dst);
+
+ResultAndError Install(context::MenderContext &main_context, const string &src);
+
+} // namespace standalone
+} // namespace update
+} // namespace mender
+
+#endif // MENDER_UPDATE_STANDALONE_HPP

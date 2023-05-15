@@ -50,6 +50,10 @@ error::Error ShowProvides(context::MenderContext &main_context) {
 	return error::NoError;
 }
 
+error::Error Install(context::MenderContext &main_context, const string &src, bool reboot_exit_code) {
+	return error::NoError;
+}
+
 } // namespace cli
 } // namespace update
 } // namespace mender

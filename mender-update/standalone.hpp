@@ -15,8 +15,19 @@
 #ifndef MENDER_UPDATE_STANDALONE_HPP
 #define MENDER_UPDATE_STANDALONE_HPP
 
+#include <unordered_map>
+
 #include <common/error.hpp>
 #include <common/expected.hpp>
+#include <common/key_value_database.hpp>
+#include <common/json.hpp>
+#include <common/optional.hpp>
+
+#include <artifact/artifact.hpp>
+
+#include <mender-update/context.hpp>
+
+#include <mender-update/update_module/v3/update_module.hpp>
 
 namespace mender {
 namespace update {
@@ -24,8 +35,17 @@ namespace standalone {
 
 using namespace std;
 
+namespace database = mender::common::key_value_database;
 namespace error = mender::common::error;
 namespace expected = mender::common::expected;
+namespace json = mender::common::json;
+namespace optional = mender::common::optional;
+
+namespace artifact = mender::artifact;
+
+namespace context = mender::update::context;
+
+namespace update_module = mender::update::update_module::v3;
 
 // The keys and data, respectively, of the JSON object living under the `standalone_data_key` entry
 // in the database. Be sure to take into account upgrades when changing this.
@@ -41,8 +61,8 @@ struct StandaloneData {
 	int version;
 	string artifact_name;
 	string artifact_group;
-	unordered_map<string, string> artifact_provides;
-	vector<string> artifact_clears_provides;
+	optional::optional<unordered_map<string, string>> artifact_provides;
+	optional::optional<vector<string>> artifact_clears_provides;
 	vector<string> payload_types;
 };
 
@@ -65,7 +85,12 @@ struct ResultAndError {
 // empty in the database.
 expected::ExpectedBool LoadStandaloneData(database::KeyValueDatabase &db, StandaloneData &dst);
 
+void StandaloneDataFromPayloadHeaderView(const artifact::PayloadHeaderView &header, StandaloneData &dst);
+error::Error SaveStandaloneData(database::KeyValueDatabase &db, const StandaloneData &data);
+
 ResultAndError Install(context::MenderContext &main_context, const string &src);
+
+ResultAndError DoInstallStates(update_module::UpdateModule &update_module);
 
 } // namespace standalone
 } // namespace update

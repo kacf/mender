@@ -65,6 +65,8 @@ string MenderContextErrorCategoryClass::message(int code) const {
 		return "Value error";
 	case DatabaseValueError:
 		return "Value in database is invalid or corrupted";
+	case RebootRequiredError:
+		return "Reboot required";
 	}
 	assert(false);
 	return "Unknown";

@@ -46,6 +46,15 @@ if(MENDER_USE_BOOST_FS)
 endif()
 
 
+add_library(mender_update_standalone STATIC
+  standalone/standalone.cpp
+)
+target_link_libraries(mender_update_standalone PUBLIC
+  common_error
+  update_module
+  mender_context
+)
+
 add_library(mender_update_cli STATIC
   cli/actions.cpp
   cli/cli.cpp
@@ -53,6 +62,7 @@ add_library(mender_update_cli STATIC
 target_link_libraries(mender_update_cli PUBLIC
   common_error
   mender_context
+  mender_update_standalone
 )
 
 add_executable(mender_update_cli_test EXCLUDE_FROM_ALL cli/cli_test.cpp)

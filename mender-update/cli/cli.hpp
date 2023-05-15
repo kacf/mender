@@ -18,6 +18,8 @@
 #include <common/error.hpp>
 #include <common/expected.hpp>
 
+#include <mender-update/cli/actions.hpp>
+
 namespace mender {
 namespace update {
 namespace cli {
@@ -27,13 +29,7 @@ using namespace std;
 namespace error = mender::common::error;
 namespace expected = mender::common::expected;
 
-enum class Action {
-	ShowArtifact,
-	ShowProvides,
-};
-using ExpectedAction = expected::expected<Action, error::Error>;
-
-ExpectedAction ParseUpdateArguments(
+ExpectedActionPtr ParseUpdateArguments(
 	vector<string>::const_iterator start, vector<string>::const_iterator end);
 
 int Main(const vector<string> &args);

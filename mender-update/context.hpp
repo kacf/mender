@@ -45,6 +45,7 @@ enum MenderContextErrorCode {
 	ParseError,
 	ValueError,
 	DatabaseValueError,
+	RebootRequiredError,
 };
 
 class MenderContextErrorCategoryClass : public std::error_category {

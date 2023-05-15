@@ -19,7 +19,6 @@
 #include <common/conf.hpp>
 
 #include <mender-update/context.hpp>
-#include <mender-update/cli/actions.hpp>
 
 namespace mender {
 namespace update {
@@ -27,7 +26,7 @@ namespace cli {
 
 namespace conf = mender::common::conf;
 
-ExpectedAction ParseUpdateArguments(
+ExpectedActionPtr ParseUpdateArguments(
 	vector<string>::const_iterator start, vector<string>::const_iterator end) {
 	if (start == end) {
 		return expected::unexpected(conf::MakeError(conf::InvalidOptionsError, "Need an action"));
@@ -41,7 +40,7 @@ ExpectedAction ParseUpdateArguments(
 			return expected::unexpected(arg.error());
 		}
 
-		return Action::ShowArtifact;
+		return make_shared<ShowArtifactAction>();
 	} else if (start[0] == "show-provides") {
 		unordered_set<string> options {};
 		conf::CmdlineOptionsIterator iter(start + 1, end, options, options);
@@ -50,7 +49,40 @@ ExpectedAction ParseUpdateArguments(
 			return expected::unexpected(arg.error());
 		}
 
-		return Action::ShowProvides;
+		return make_shared<ShowProvidesAction>();
+	} else if (start[0] == "install") {
+		unordered_set<string> options {};
+		conf::CmdlineOptionsIterator iter(start + 1, end, options, options);
+		iter.SetArgumentsMode(conf::ArgumentsMode::AcceptBareArguments);
+
+		string filename;
+		while (true) {
+			auto arg = iter.Next();
+			if (!arg) {
+				return expected::unexpected(arg.error());
+			}
+
+			auto value = arg.value();
+			if (value.option != "") {
+				return expected::unexpected(conf::MakeError(conf::InvalidOptionsError, "No such option: " + value.option));
+			}
+
+			if (value.value != "") {
+				if (filename != "") {
+					return expected::unexpected(conf::MakeError(conf::InvalidOptionsError, "Too many arguments: " + value.value));
+				} else {
+					filename = value.value;
+				}
+			} else {
+				if (filename == "") {
+					return expected::unexpected(conf::MakeError(conf::InvalidOptionsError, "Need a path to an artifact"));
+				} else {
+					break;
+				}
+			}
+		}
+
+		return make_shared<InstallAction>(filename);
 	} else {
 		return expected::unexpected(
 			conf::MakeError(conf::InvalidOptionsError, "No such action: " + start[0]));
@@ -80,14 +112,7 @@ int Main(const vector<string> &args) {
 		return 1;
 	}
 
-	switch (action.value()) {
-	case Action::ShowArtifact:
-		err = mender::update::cli::ShowArtifact(main_context);
-		break;
-	case Action::ShowProvides:
-		err = mender::update::cli::ShowProvides(main_context);
-		break;
-	}
+	err = action.value()->Execute(main_context);
 
 	if (err != error::NoError) {
 		cerr << "Could not fulfill request: " + err.String() << endl;

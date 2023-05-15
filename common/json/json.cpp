@@ -55,7 +55,7 @@ expected::expected<KeyValueMap, error::Error> Json::Get<KeyValueMap>() const {
 }
 
 template <>
-expected::expected<StringVector, error::Error> Json::Get<StringVector>() const {
+expected::expected<vector<string>, error::Error> Json::Get<vector<string>>() const {
 	return ToStringVector(*this);
 }
 

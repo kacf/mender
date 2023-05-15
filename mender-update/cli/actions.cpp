@@ -14,6 +14,8 @@
 
 #include <mender-update/cli/actions.hpp>
 
+#include <mender-update/standalone.hpp>
+
 namespace mender {
 namespace update {
 namespace cli {
@@ -21,7 +23,9 @@ namespace cli {
 namespace conf = mender::common::conf;
 namespace database = mender::common::key_value_database;
 
-error::Error ShowArtifact(context::MenderContext &main_context) {
+namespace standalone = mender::update::standalone;
+
+error::Error ShowArtifactAction::Execute(context::MenderContext &main_context) {
 	auto exp_provides = main_context.LoadProvides();
 	if (!exp_provides) {
 		return exp_provides.error();
@@ -36,7 +40,7 @@ error::Error ShowArtifact(context::MenderContext &main_context) {
 	return error::NoError;
 }
 
-error::Error ShowProvides(context::MenderContext &main_context) {
+error::Error ShowProvidesAction::Execute(context::MenderContext &main_context) {
 	auto exp_provides = main_context.LoadProvides();
 	if (!exp_provides) {
 		return exp_provides.error();
@@ -50,8 +54,14 @@ error::Error ShowProvides(context::MenderContext &main_context) {
 	return error::NoError;
 }
 
-error::Error Install(context::MenderContext &main_context, const string &src, bool reboot_exit_code) {
-	return error::NoError;
+error::Error InstallAction::Execute(context::MenderContext &main_context) {
+	auto result = standalone::Install(main_context, src_);
+	switch (result.result) {
+	case standalone::Result::InstalledRebootRequired:
+		return context::MakeError(context::RebootRequiredError, "Reboot required");
+	default:
+		return result.err;
+	}
 }
 
 } // namespace cli

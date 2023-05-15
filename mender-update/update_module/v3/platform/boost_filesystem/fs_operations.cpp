@@ -184,13 +184,13 @@ error::Error UpdateModule::PrepareFileTree(const string &path, artifact::Payload
 	}
 
 	err = CreateDataFile(
-		header_subdir_path, "header_info", payload_meta_data.header.header_info.Dump());
+		header_subdir_path, "header_info", payload_meta_data.header.header_info.verbatim.Dump());
 	if (err != error::NoError) {
 		return err;
 	}
 
 	err =
-		CreateDataFile(header_subdir_path, "type_info", payload_meta_data.header.type_info.Dump());
+		CreateDataFile(header_subdir_path, "type_info", payload_meta_data.header.type_info.verbatim.Dump());
 	if (err != error::NoError) {
 		return err;
 	}

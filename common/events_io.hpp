@@ -124,6 +124,19 @@ private:
 	EventLoop &loop_;
 };
 
+using AsyncReaderFromEventLoopFunc = function<mio::AsyncReaderPtr(EventLoop &loop)>;
+
+class ReaderFromAsyncReader : virtual public mio::Reader {
+public:
+	ReaderFromAsyncReader(AsyncReaderFromEventLoopFunc func);
+
+	mio::ExpectedSize Read(vector<uint8_t>::iterator start, vector<uint8_t>::iterator end) override;
+
+private:
+	EventLoop event_loop_;
+	mio::AsyncReaderPtr reader_;
+};
+
 } // namespace io
 } // namespace events
 } // namespace common

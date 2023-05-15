@@ -123,6 +123,31 @@ void AsyncWriterFromWriter::Cancel() {
 	}
 }
 
+ReaderFromAsyncReader::ReaderFromAsyncReader(AsyncReaderFromEventLoopFunc func) {
+	reader_ = func(event_loop_);
+}
+
+mio::ExpectedSize ReaderFromAsyncReader::Read(vector<uint8_t>::iterator start, vector<uint8_t>::iterator end) {
+	size_t read;
+	error::Error err;
+	err = reader_->AsyncRead(start, end, [this, &read, &err](size_t n, error::Error inner_err) {
+		read = n;
+		err = inner_err;
+		event_loop_.Stop();
+	});
+	if (err != error::NoError) {
+		return expected::unexpected(err);
+	}
+
+	event_loop_.Run();
+
+	if (err != error::NoError) {
+		return expected::unexpected(err);
+	} else {
+		return read;
+	}
+}
+
 } // namespace io
 } // namespace events
 } // namespace common

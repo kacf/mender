@@ -239,6 +239,7 @@ ResultAndError Install(context::MenderContext &main_context, const string &src) 
 }
 
 ResultAndError DoInstallStates(update_module::UpdateModule &update_module) {
+	
 	return {Result::FailedNothingDone, error::NoError};
 }
 

@@ -57,11 +57,35 @@ error::Error ShowProvidesAction::Execute(context::MenderContext &main_context) {
 error::Error InstallAction::Execute(context::MenderContext &main_context) {
 	auto result = standalone::Install(main_context, src_);
 	switch (result.result) {
+	case standalone::Result::InstalledAndCommitted:
+		cout << "Installed and committed." << endl;
+		break;
+	case standalone::Result::Committed:
+		cout << "Committed." << endl;
+		break;
+	case standalone::Result::Installed:
 	case standalone::Result::InstalledRebootRequired:
-		return context::MakeError(context::RebootRequiredError, "Reboot required");
-	default:
-		return result.err;
+		cout << "Installed, but not committed." << endl;
+		cout << "Use 'commit' to update, or 'rollback' to roll back the update." << endl;
+		if (result.result == standalone::Result::InstalledRebootRequired) {
+			cout << "At least one payload requested a reboot of the device it updated." << endl;
+			result.err = context::MakeError(context::RebootRequiredError, "Reboot required");
+		}
+		break;
+	case standalone::Result::FailedNothingDone:
+		cout << "Installation failed. System not modified." << endl;
+		break;
+	case standalone::Result::FailedAndRolledBack:
+		cout << "Installation failed. Rolled back modifications." << endl;
+		break;
+	case standalone::Result::FailedAndNoRollback:
+		cout << "Installation failed, and Update Module does not support rollback. System may be in an inconsistent state." << endl;
+		break;
+	case standalone::Result::FailedAndRollbackFailed:
+		cout << "Installation failed, and rollback also failed. System may be in an inconsistent state." << endl;
+		break;
 	}
+	return result.err;
 }
 
 } // namespace cli

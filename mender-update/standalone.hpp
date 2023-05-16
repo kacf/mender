@@ -68,11 +68,13 @@ struct StandaloneData {
 
 enum class Result {
 	InstalledAndCommitted,
+	Installed,
 	InstalledRebootRequired,
 	Committed,
 	FailedNothingDone,
 	FailedAndRolledBack,
 	FailedAndNoRollback,
+	FailedAndRollbackFailed,
 };
 
 struct ResultAndError {

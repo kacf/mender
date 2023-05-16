@@ -68,7 +68,7 @@ ExpectedRebootAction UpdateModule::NeedsReboot() {
 	}
 	if (processStdOut == "Yes") {
 		return RebootAction::Yes;
-	} else if (processStdOut == "No") {
+	} else if (processStdOut == "No" || processStdOut == "") {
 		return RebootAction::No;
 	} else if (processStdOut == "Automatic") {
 		return RebootAction::Automatic;
@@ -94,7 +94,7 @@ expected::ExpectedBool UpdateModule::SupportsRollback() {
 	}
 	if (processStdOut == "Yes") {
 		return true;
-	} else if (processStdOut == "No") {
+	} else if (processStdOut == "No" || processStdOut == "") {
 		return false;
 	}
 	return expected::unexpected(error::Error(
@@ -132,6 +132,14 @@ string UpdateModule::GetModulePath() const {
 
 string UpdateModule::GetModulesWorkPath() const {
 	return update_module_workdir_;
+}
+
+error::Error UpdateModule::GetProcessError(const error::Error &err) {
+	if (err.code == make_error_condition(errc::no_such_file_or_directory)) {
+		return context::MakeError(context::NoSuchUpdateModuleError, err.message);
+	} else {
+		return err;
+	}
 }
 
 } // namespace v3

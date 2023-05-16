@@ -83,6 +83,24 @@ ExpectedActionPtr ParseUpdateArguments(
 		}
 
 		return make_shared<InstallAction>(filename);
+	} else if (start[0] == "commit") {
+		unordered_set<string> options {};
+		conf::CmdlineOptionsIterator iter(start + 1, end, options, options);
+		auto arg = iter.Next();
+		if (!arg) {
+			return expected::unexpected(arg.error());
+		}
+
+		return make_shared<CommitAction>();
+	} else if (start[0] == "rollback") {
+		unordered_set<string> options {};
+		conf::CmdlineOptionsIterator iter(start + 1, end, options, options);
+		auto arg = iter.Next();
+		if (!arg) {
+			return expected::unexpected(arg.error());
+		}
+
+		return make_shared<RollbackAction>();
 	} else {
 		return expected::unexpected(
 			conf::MakeError(conf::InvalidOptionsError, "No such action: " + start[0]));
@@ -115,7 +133,9 @@ int Main(const vector<string> &args) {
 	err = action.value()->Execute(main_context);
 
 	if (err != error::NoError) {
-		cerr << "Could not fulfill request: " + err.String() << endl;
+		if (err.code != context::MakeError(context::ExitStatusOnlyError, "").code) {
+			cerr << "Could not fulfill request: " + err.String() << endl;
+		}
 		return 1;
 	}
 

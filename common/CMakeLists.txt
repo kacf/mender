@@ -1,6 +1,10 @@
 include_directories(${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR})
 
-add_library(common STATIC common.cpp)
+add_library(common STATIC)
+target_sources(common PRIVATE
+  common.cpp
+  platform/c++11/common.cpp
+)
 
 add_library(common_setup STATIC setup/platform/posix/setup.cpp)
 

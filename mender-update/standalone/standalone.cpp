@@ -15,6 +15,7 @@
 #include <mender-update/standalone.hpp>
 
 #include <common/events_io.hpp>
+#include <common/log.hpp>
 #include <common/conf/paths.hpp>
 
 namespace mender {
@@ -22,6 +23,8 @@ namespace update {
 namespace standalone {
 
 namespace events = mender::common::events;
+namespace io = mender::common::io;
+namespace log = mender::common::log;
 namespace paths = mender::common::conf::paths;
 
 const string StandaloneDataKeys::version {"Version"};
@@ -190,9 +193,13 @@ error::Error SaveStandaloneData(database::KeyValueDatabase &db, const Standalone
 	return db.Write(context::MenderContext::standalone_state_key, bytedata);
 }
 
+error::Error RemoveStandaloneData(database::KeyValueDatabase &db) {
+	return db.Remove(context::MenderContext::standalone_state_key);
+}
+
 ResultAndError Install(context::MenderContext &main_context, const string &src) {
-	StandaloneData update_data;
-	auto exp_in_progress = LoadStandaloneData(main_context.GetMenderStoreDB(), update_data);
+	StandaloneData data;
+	auto exp_in_progress = LoadStandaloneData(main_context.GetMenderStoreDB(), data);
 	if (!exp_in_progress) {
 		return {Result::FailedNothingDone, exp_in_progress.error()};
 	}
@@ -205,15 +212,12 @@ ResultAndError Install(context::MenderContext &main_context, const string &src) 
 		return {Result::FailedNothingDone, error::Error(make_error_condition(errc::not_supported), "HTTP not supported yet")};
 	}
 
-	events::io::AsyncFileDescriptorReaderPtr async_artifact_reader;
-	events::io::ReaderFromAsyncReader artifact_reader([&async_artifact_reader](events::EventLoop &loop) {
-		async_artifact_reader = make_shared<events::io::AsyncFileDescriptorReader>(loop);
-		return async_artifact_reader;
-	});
-	auto err = async_artifact_reader->Open(src);
-	if (err != error::NoError) {
-		return {Result::FailedNothingDone, err};
+	auto stream = make_shared<ifstream>(src);
+	if (!stream->good()) {
+		int errnum = errno;
+		return {Result::FailedNothingDone, error::Error(generic_category().default_error_condition(errnum), "Could not open " + src)};
 	}
+	io::StreamReader artifact_reader(stream);
 
 	artifact::config::ParserConfig config {
 		paths::DefaultArtScriptsPath,
@@ -230,17 +234,223 @@ ResultAndError Install(context::MenderContext &main_context, const string &src) 
 
 	update_module::UpdateModule update_module(main_context, header.value().header.payload_type);
 
-	err = update_module.PrepareFileTree(update_module.GetUpdateModuleWorkDir(), header.value());
+	auto err = update_module.PrepareFileTree(update_module.GetUpdateModuleWorkDir(), header.value());
+	if (err != error::NoError) {
+		auto err2 = update_module.Cleanup();
+		if (err2 != error::NoError) {
+			log::Error("Update Module Cleanup failed: " + err2.String());
+		}
+		return {Result::FailedNothingDone, err};
+	}
+
+	StandaloneDataFromPayloadHeaderView(header.value(), data);
+	err = SaveStandaloneData(main_context.GetMenderStoreDB(), data);
 	if (err != error::NoError) {
 		return {Result::FailedNothingDone, err};
 	}
 
-	return DoInstallStates(update_module);
+	return DoInstallStates(main_context, data, parser.value(), update_module);
 }
 
-ResultAndError DoInstallStates(update_module::UpdateModule &update_module) {
-	
-	return {Result::FailedNothingDone, error::NoError};
+ResultAndError Commit(context::MenderContext &main_context) {
+	StandaloneData data;
+	auto exp_in_progress = LoadStandaloneData(main_context.GetMenderStoreDB(), data);
+	if (!exp_in_progress) {
+		return {Result::FailedNothingDone, exp_in_progress.error()};
+	}
+
+	if (!exp_in_progress.value()) {
+		return {Result::NoUpdateInProgress, error::NoError};
+	}
+
+	update_module::UpdateModule update_module(main_context, data.payload_types[0]);
+
+	return DoCommit(main_context, data, update_module);
+}
+
+ResultAndError DoInstallStates(
+	context::MenderContext &main_context,
+	StandaloneData &data,
+	artifact::Artifact &artifact,
+	update_module::UpdateModule &update_module) {
+
+	auto payload = artifact.Next();
+	// TODO: Bootstrap artifact
+	if (!payload) {
+		return {Result::FailedNothingDone, payload.error()};
+	}
+
+	cout << "Installing artifact..." << endl;
+
+	auto err = update_module.Download(payload.value());
+	if (err != error::NoError) {
+		auto err2 = update_module.Cleanup();
+		if (err2 == error::NoError) {
+			log::Error("Update Module Cleanup failed: " + err2.String());
+		}
+		err2 = RemoveStandaloneData(main_context.GetMenderStoreDB());
+		if (err2 != error::NoError) {
+			log::Error("Removing update data from database failed: " + err2.String());
+		}
+		return {Result::FailedNothingDone, err};
+	}
+
+	err = update_module.ArtifactInstall();
+	if (err != error::NoError) {
+		log::Error("Installation failed: " + err.String());
+		return InstallationFailureHandler(main_context, data, update_module);
+	}
+
+	auto reboot = update_module.NeedsReboot();
+	if (!reboot) {
+		log::Error("Could not query for reboot: " + reboot.error().String());
+		return InstallationFailureHandler(main_context, data, update_module);
+	}
+
+	auto rollback_support = update_module.SupportsRollback();
+	if (!rollback_support) {
+		log::Error("Could not query for rollback support: " + rollback_support.error().String());
+		return InstallationFailureHandler(main_context, data, update_module);
+	}
+
+	if (rollback_support.value()) {
+		if (reboot.value() != update_module::RebootAction::No) {
+			return {Result::InstalledRebootRequired, error::NoError};
+		} else {
+			return {Result::Installed, error::NoError};
+		}
+	}
+
+	cout << "Update Module doesn't support rollback. Committing immediately." << endl;
+
+	auto result = DoCommit(main_context, data, update_module);
+	if (result.result == Result::Committed) {
+		if (reboot.value() != update_module::RebootAction::No) {
+			result.result = Result::InstalledAndCommittedRebootRequired;
+		} else {
+			result.result = Result::InstalledAndCommitted;
+		}
+	}
+	return result;
+}
+
+ResultAndError DoCommit(
+	context::MenderContext &main_context,
+	StandaloneData &data,
+	update_module::UpdateModule &update_module) {
+
+	auto err = update_module.ArtifactCommit();
+	if (err != error::NoError) {
+		log::Error("Commit failed: " + err.String());
+		return InstallationFailureHandler(main_context, data, update_module);
+	}
+
+	auto result = Result::Committed;
+	error::Error return_err;
+
+	err = update_module.Cleanup();
+	if (err != error::NoError) {
+		log::Error("Update Module Cleanup failed: " + err.String());
+		result = Result::InstalledButFailedInPostCommit;
+		return_err = move(err);
+	}
+
+	err = main_context.CommitArtifactData(
+		data.artifact_name,
+		data.artifact_group,
+		data.artifact_provides,
+		data.artifact_clears_provides,
+		[](database::Transaction &txn) {
+			return txn.Remove(context::MenderContext::standalone_state_key);
+		}
+	);
+	if (err != error::NoError) {
+		result = Result::InstalledButFailedInPostCommit;
+		return_err = move(err);
+	}
+
+	return {result, return_err};
+}
+
+ResultAndError InstallationFailureHandler(
+	context::MenderContext &main_context,
+	StandaloneData &data,
+	update_module::UpdateModule &update_module) {
+
+	error::Error err;
+	error::Error return_err;
+	bool successful_rollback;
+	bool rollback_support;
+
+	auto exp_rollback_support = update_module.SupportsRollback();
+	if (!exp_rollback_support) {
+		log::Error("Could not query for rollback support: " + exp_rollback_support.error().String());
+		successful_rollback = false;
+		rollback_support = false;
+		return_err = move(err);
+	} else {
+		rollback_support = exp_rollback_support.value();
+		if (rollback_support) {
+			err = update_module.ArtifactRollback();
+			if (err == error::NoError) {
+				successful_rollback = true;
+			} else {
+				log::Error("Rollback failed: " + err.String());
+				successful_rollback = false;
+				return_err = move(err);
+			}
+		} else {
+			log::Info("No rollback support.");
+			successful_rollback = false;
+		}
+	}
+
+	err = update_module.ArtifactFailure();
+	if (err != error::NoError) {
+		log::Error("Update Module ArtifactFailure state failed: " + err.String());
+		successful_rollback = false;
+		return_err = move(err);
+	}
+
+	err = update_module.Cleanup();
+	if (err != error::NoError) {
+		log::Error("Update Module Cleanup failed: " + err.String());
+		successful_rollback = false;
+		return_err = move(err);
+	}
+
+	if (successful_rollback) {
+		err = RemoveStandaloneData(main_context.GetMenderStoreDB());
+		if (err != error::NoError) {
+			successful_rollback = false;
+			return_err = move(err);
+		}
+	} else {
+		data.artifact_name += main_context.broken_artifact_name_suffix;
+		if (data.artifact_provides) {
+			data.artifact_provides.value()["artifact_name"] = data.artifact_name;
+		}
+		err = main_context.CommitArtifactData(
+			data.artifact_name,
+			data.artifact_group,
+			data.artifact_provides,
+			data.artifact_clears_provides,
+			[](database::Transaction &txn) {
+				return txn.Remove(context::MenderContext::standalone_state_key);
+			}
+		);
+		if (err != error::NoError) {
+			return_err = move(err);
+		}
+	}
+
+	if (successful_rollback) {
+		return {Result::FailedAndRolledBack, return_err};
+	} else if (rollback_support) {
+		return {Result::FailedAndNoRollback, return_err};
+	} else {
+		return {Result::FailedAndRollbackFailed, return_err};
+	}
 }
 
 } // namespace standalone

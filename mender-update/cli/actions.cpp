@@ -54,10 +54,30 @@ error::Error ShowProvidesAction::Execute(context::MenderContext &main_context) {
 	return error::NoError;
 }
 
-error::Error InstallAction::Execute(context::MenderContext &main_context) {
-	auto result = standalone::Install(main_context, src_);
+static error::Error ResultHandler(standalone::ResultAndError result) {
 	switch (result.result) {
 	case standalone::Result::InstalledAndCommitted:
+	case standalone::Result::Committed:
+	case standalone::Result::Installed:
+		// Just pass through error if there is one (most likely not).
+		break;
+	case standalone::Result::InstalledAndCommittedRebootRequired:
+	case standalone::Result::InstalledRebootRequired:
+		if (result.err == error::NoError) {
+			result.err = context::MakeError(context::RebootRequiredError, "Reboot required");
+		}
+		break;
+	default:
+		// All other states, make sure they have an error.
+		if (result.err == error::NoError) {
+			result.err = context::MakeError(context::ExitStatusOnlyError, "");
+		}
+		break;
+	}
+
+	switch (result.result) {
+	case standalone::Result::InstalledAndCommitted:
+	case standalone::Result::InstalledAndCommittedRebootRequired:
 		cout << "Installed and committed." << endl;
 		break;
 	case standalone::Result::Committed:
@@ -67,10 +87,12 @@ error::Error InstallAction::Execute(context::MenderContext &main_context) {
 	case standalone::Result::InstalledRebootRequired:
 		cout << "Installed, but not committed." << endl;
 		cout << "Use 'commit' to update, or 'rollback' to roll back the update." << endl;
-		if (result.result == standalone::Result::InstalledRebootRequired) {
-			cout << "At least one payload requested a reboot of the device it updated." << endl;
-			result.err = context::MakeError(context::RebootRequiredError, "Reboot required");
-		}
+		break;
+	case standalone::Result::InstalledButFailedInPostCommit:
+		cout << "Installed, but one or more post-commit steps failed." << endl;
+		break;
+	case standalone::Result::NoUpdateInProgress:
+		cout << "No update in progress." << endl;
 		break;
 	case standalone::Result::FailedNothingDone:
 		cout << "Installation failed. System not modified." << endl;
@@ -85,7 +107,32 @@ error::Error InstallAction::Execute(context::MenderContext &main_context) {
 		cout << "Installation failed, and rollback also failed. System may be in an inconsistent state." << endl;
 		break;
 	}
+
+	switch (result.result) {
+	case standalone::Result::InstalledRebootRequired:
+	case standalone::Result::InstalledAndCommittedRebootRequired:
+		cout << "At least one payload requested a reboot of the device it updated." << endl;
+		break;
+	default:
+		break;
+	}
+
 	return result.err;
+}
+
+error::Error InstallAction::Execute(context::MenderContext &main_context) {
+	auto result = standalone::Install(main_context, src_);
+	return ResultHandler(result);
+}
+
+error::Error CommitAction::Execute(context::MenderContext &main_context) {
+	auto result = standalone::Commit(main_context);
+	return ResultHandler(result);
+}
+
+error::Error RollbackAction::Execute(context::MenderContext &main_context) {
+	auto result = standalone::Rollback(main_context);
+	return ResultHandler(result);
 }
 
 } // namespace cli

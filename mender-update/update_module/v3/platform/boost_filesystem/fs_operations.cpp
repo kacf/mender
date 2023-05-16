@@ -127,6 +127,12 @@ error::Error UpdateModule::PrepareFileTree(const string &path, artifact::Payload
 
 	const fs::path file_tree_path {path};
 
+	boost::system::error_code ec;
+	fs::remove_all(file_tree_path, ec);
+	if (ec) {
+		return error::Error(ec.default_error_condition(), "Could not clean File Tree for Update Module");
+	}
+
 	const fs::path header_subdir_path = file_tree_path / "header";
 	CreateDirectories(header_subdir_path);
 

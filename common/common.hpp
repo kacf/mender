@@ -48,6 +48,13 @@ mender::common::expected::ExpectedLongLong StringToLongLong(const string &str, i
 
 vector<string> SplitString(const string &str, const string &delim);
 
+// Some parts of standard C++, such as regex, require exceptions. Use this function in cases where
+// an exception cannot be avoided; it will automatically catch exceptions thrown by the given
+// function, and produce an error from it. On platforms where exceptions are disabled, any attempt
+// to throw them will abort instead, so if you use this function, do your utmost to avoid an
+// exception ahead of time (make sure the regex is valid, for instance).
+error::Error ExceptionToErrorOrAbort(function<void()> func);
+
 } // namespace common
 } // namespace mender
 

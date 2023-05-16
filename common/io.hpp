@@ -127,7 +127,7 @@ public:
 		// the object.
 		is_ (&stream, [](std::istream *stream) {}) {
 	}
-	StreamReader(shared_ptr<std::istream> &stream) :
+	StreamReader(shared_ptr<std::istream> stream) :
 		is_ {stream} {
 	}
 	ExpectedSize Read(vector<uint8_t>::iterator start, vector<uint8_t>::iterator end) override {

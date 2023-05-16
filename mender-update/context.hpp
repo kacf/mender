@@ -22,6 +22,7 @@
 #include <common/error.hpp>
 #include <common/expected.hpp>
 #include <common/key_value_database.hpp>
+#include <common/optional.hpp>
 
 #if MENDER_USE_LMDB
 #include <common/key_value_database_lmdb.hpp>
@@ -36,6 +37,7 @@ namespace context {
 namespace conf = mender::common::conf;
 namespace error = mender::common::error;
 namespace expected = mender::common::expected;
+namespace optional = mender::common::optional;
 namespace kv_db = mender::common::key_value_database;
 
 using namespace std;
@@ -46,6 +48,10 @@ enum MenderContextErrorCode {
 	ValueError,
 	DatabaseValueError,
 	RebootRequiredError,
+	NoSuchUpdateModuleError,
+	// Means that we do have an error, but don't print anything. Used for errors where the cli
+	// already prints a nicely formatted message.
+	ExitStatusOnlyError,
 };
 
 class MenderContextErrorCategoryClass : public std::error_category {
@@ -58,6 +64,7 @@ extern const MenderContextErrorCategoryClass MenderContextErrorCategory;
 error::Error MakeError(MenderContextErrorCode code, const string &msg);
 
 using ProvidesData = unordered_map<string, string>;
+using ClearsProvidesData = vector<string>;
 using ExpectedProvidesData = expected::expected<ProvidesData, error::Error>;
 
 class MenderContext {
@@ -68,11 +75,21 @@ public:
 	error::Error Initialize();
 	kv_db::KeyValueDatabase &GetMenderStoreDB();
 	ExpectedProvidesData LoadProvides();
+	ExpectedProvidesData LoadProvides(kv_db::Transaction &txn);
 	expected::ExpectedString GetDeviceType();
-	error::Error CommitArtifactData(const ProvidesData &data);
+	// Stores new artifact data, taking existing provides, and clears_provides, into account.
+	error::Error CommitArtifactData(
+		string artifact_name,
+		string artifact_group,
+		const optional::optional<ProvidesData> &new_provides,
+		const optional::optional<ClearsProvidesData> &clears_provides,
+		function<error::Error(kv_db::Transaction &)> txn_func);
 	const conf::MenderConfig &GetConfig() const {
 		return config_;
 	}
+
+	// Suffix used for updates that either can't roll back or fail their rollback.
+	static const string broken_artifact_name_suffix;
 
 	// DATABASE KEYS ------------------------------------------------------
 

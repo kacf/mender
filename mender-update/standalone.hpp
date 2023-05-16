@@ -70,7 +70,13 @@ enum class Result {
 	InstalledAndCommitted,
 	Installed,
 	InstalledRebootRequired,
+	InstalledAndCommittedRebootRequired,
 	Committed,
+	InstalledButFailedInPostCommit,
+	NoUpdateInProgress,
+	RolledBack,
+	NoRollback,
+	RollbackFailed,
 	FailedNothingDone,
 	FailedAndRolledBack,
 	FailedAndNoRollback,
@@ -90,9 +96,26 @@ expected::ExpectedBool LoadStandaloneData(database::KeyValueDatabase &db, Standa
 void StandaloneDataFromPayloadHeaderView(const artifact::PayloadHeaderView &header, StandaloneData &dst);
 error::Error SaveStandaloneData(database::KeyValueDatabase &db, const StandaloneData &data);
 
-ResultAndError Install(context::MenderContext &main_context, const string &src);
+error::Error RemoveStandaloneData(database::KeyValueDatabase &db);
 
-ResultAndError DoInstallStates(update_module::UpdateModule &update_module);
+ResultAndError Install(context::MenderContext &main_context, const string &src);
+ResultAndError Commit(context::MenderContext &main_context);
+ResultAndError Rollback(context::MenderContext &main_context);
+
+ResultAndError DoInstallStates(
+	context::MenderContext &main_context,
+	StandaloneData &data,
+	artifact::Artifact &artifact,
+	update_module::UpdateModule &update_module);
+ResultAndError DoCommit(
+	context::MenderContext &main_context,
+	StandaloneData &data,
+	update_module::UpdateModule &update_module);
+
+ResultAndError InstallationFailureHandler(
+	context::MenderContext &main_context,
+	StandaloneData &data,
+	update_module::UpdateModule &update_module);
 
 } // namespace standalone
 } // namespace update

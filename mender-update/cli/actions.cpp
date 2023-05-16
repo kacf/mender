@@ -59,7 +59,9 @@ static error::Error ResultHandler(standalone::ResultAndError result) {
 	case standalone::Result::InstalledAndCommitted:
 	case standalone::Result::Committed:
 	case standalone::Result::Installed:
-		// Just pass through error if there is one (most likely not).
+	case standalone::Result::RolledBack:
+		// There should not be any error for these.
+		assert(result.err == error::NoError);
 		break;
 	case standalone::Result::InstalledAndCommittedRebootRequired:
 	case standalone::Result::InstalledRebootRequired:
@@ -96,6 +98,15 @@ static error::Error ResultHandler(standalone::ResultAndError result) {
 		break;
 	case standalone::Result::FailedNothingDone:
 		cout << "Installation failed. System not modified." << endl;
+		break;
+	case standalone::Result::RolledBack:
+		cout << "Rolled back." << endl;
+		break;
+	case standalone::Result::NoRollback:
+		cout << "Update Module does not support rollback." << endl;
+		break;
+	case standalone::Result::RollbackFailed:
+		cout << "Rollback failed. System may be in an inconsistent state." << endl;
 		break;
 	case standalone::Result::FailedAndRolledBack:
 		cout << "Installation failed. Rolled back modifications." << endl;

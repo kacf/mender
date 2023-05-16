@@ -33,8 +33,9 @@ UpdateModule::UpdateModule(MenderContext &ctx, const string &payload_type) :
 
 	update_module_path_ =
 		path::Join(conf::paths::DefaultModulesPath, payload_type);
+	// TODO: Fix properly.
 	update_module_workdir_ =
-		path::Join(ctx.GetConfig().data_store_dir, "payloads", "0000", "tree");
+		path::Join(ctx.GetConfig().data_store_dir, "modules", "v3", "payloads", "0000", "tree");
 }
 
 UpdateModule::DownloadData::DownloadData(artifact::Payload &payload) :

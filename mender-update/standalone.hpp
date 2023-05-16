@@ -111,11 +111,19 @@ ResultAndError DoCommit(
 	context::MenderContext &main_context,
 	StandaloneData &data,
 	update_module::UpdateModule &update_module);
+ResultAndError DoRollback(
+	context::MenderContext &main_context,
+	StandaloneData &data,
+	update_module::UpdateModule &update_module);
 
 ResultAndError InstallationFailureHandler(
 	context::MenderContext &main_context,
 	StandaloneData &data,
 	update_module::UpdateModule &update_module);
+
+error::Error CommitBrokenArtifact(
+	context::MenderContext &main_context,
+	StandaloneData &data);
 
 } // namespace standalone
 } // namespace update

@@ -42,8 +42,8 @@ const string DefaultFallbackConfFile = path::Join(DefaultDataStore, "mender.conf
 const string DefaultArtScriptsPath = path::Join(DefaultDataStore, "scripts");
 const string DefaultRootfsScriptsPath = path::Join(DefaultPathConfDir, "scripts");
 // TODO: REVERT
-// const string DefaultModulesPath = path::Join(DefaultPathDataDir, "modules/v3");
-const string DefaultModulesPath = "/home/kristian/Downloads";
+const string DefaultModulesPath = path::Join(DefaultPathDataDir, "modules/v3");
+// const string DefaultModulesPath = "/home/kristian/Downloads";
 const string DefaultModulesWorkPath = path::Join(DefaultDataStore, "modules/v3");
 const string DefaultBootstrapArtifactFile = path::Join(DefaultDataStore, "bootstrap.mender");
 

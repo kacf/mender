@@ -2,10 +2,13 @@
 
 set -ue
 
-# Is expected to contain two variable definitions with device paths:
-# - MENDER_ROOTFS_PART_A
-# - MENDER_ROOTFS_PART_B
-. /etc/mender/rootfs-image-v2.conf
+#TODO
+CONF_FILE="/var/lib/mender/mender.conf"
+
+MENDER_ROOTFS_PART_A="$(jq -r .RootfsPartA < "$CONF_FILE")"
+MENDER_ROOTFS_PART_B="$(jq -r .RootfsPartB < "$CONF_FILE")"
+MENDER_KERNEL_PART_A="$(jq -r .KernelPartA < "$CONF_FILE")"
+MENDER_KERNEL_PART_B="$(jq -r .KernelPartB < "$CONF_FILE")"
 
 MENDER_ROOTFS_PART_A_NUMBER="$(echo "$MENDER_ROOTFS_PART_A" | grep -Eo '[0-9]+$')"
 MENDER_ROOTFS_PART_B_NUMBER="$(echo "$MENDER_ROOTFS_PART_B" | grep -Eo '[0-9]+$')"
@@ -22,11 +25,13 @@ active_num="$(${PRINTENV} mender_boot_part)"
 active_num="${active_num#mender_boot_part=}"
 if test $active_num -eq $MENDER_ROOTFS_PART_A_NUMBER; then
     active=$MENDER_ROOTFS_PART_A
-    passive=$MENDER_ROOTFS_PART_B
+    passive_rootfs=$MENDER_ROOTFS_PART_B
+    passive_kernelfs=$MENDER_KERNEL_PART_B
     passive_num=$MENDER_ROOTFS_PART_B_NUMBER
 else
     active=$MENDER_ROOTFS_PART_B
-    passive=$MENDER_ROOTFS_PART_A
+    passive_rootfs=$MENDER_ROOTFS_PART_A
+    passive_kernelfs=$MENDER_KERNEL_PART_A
     passive_num=$MENDER_ROOTFS_PART_A_NUMBER
 fi
 passive_num_hex=$(printf '%x' $passive_num)
@@ -41,12 +46,32 @@ ensure_correct_root_mounted() {
 case "$1" in
     Download)
         ensure_correct_root_mounted
+
+        # The rootfs.
         file="$(cat stream-next)"
-        cat "$file" > $passive
-        if [ "$(cat stream-next)" != "" ]; then
+        cat "$file" > "$passive_rootfs"
+
+        # Separate kernel, if applicable.
+        file="$(cat stream-next)"
+        if [ -n "$MENDER_KERNEL_PART_A" ] && [ -n "$MENDER_KERNEL_PART_B" ]; then
+            if [ "$file" = "" ]; then
+                echo "Kernel payload missing from artifact" 1>&2
+                exit 1
+            fi
+
+            cat "$file" > "$passive_kernelfs"
+
+            # Get next entry
+            file="$(cat stream-next)"
+        fi
+
+        if [ "$file" != "" ]; then
             echo "More than one file in payload" 1>&2
             exit 1
         fi
+
+        # Do a filesystem sync.
+        sync
         ;;
 
     ArtifactInstall)

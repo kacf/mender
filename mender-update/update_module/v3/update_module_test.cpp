@@ -497,8 +497,6 @@ test "$file" = ""
 }
 
 TEST_F(UpdateModuleTests, DownloadProcessDiesMidway) {
-	GTEST_SKIP() << "Skipping temporarily while finishing event handling code.";
-
 	UpdateModuleTestWithDefaultArtifact art(*this);
 
 	auto maybe_script = PrepareUpdateModuleScript(*art.update_module);

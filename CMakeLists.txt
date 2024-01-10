@@ -12,7 +12,7 @@ endif()
 add_subdirectory(support)
 add_subdirectory(Documentation)
 
-if(NOT "${MENDER_NO_BUILD}" STREQUAL "1")
-  include(main.cmake)
-endif()
+# if(NOT "${MENDER_NO_BUILD}" STREQUAL "1")
+#   include(main.cmake)
+# endif()
 

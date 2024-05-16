@@ -26,8 +26,7 @@
 #include <artifact/artifact.hpp>
 
 #include <mender-update/context.hpp>
-
-#include <mender-update/update_module/v3/update_module.hpp>
+#include <mender-update/standalone/context.hpp>
 
 namespace mender {
 namespace update {
@@ -42,30 +41,6 @@ namespace json = mender::common::json;
 
 namespace artifact = mender::artifact;
 
-namespace context = mender::update::context;
-
-namespace update_module = mender::update::update_module::v3;
-
-// The keys and data, respectively, of the JSON object living under the `standalone_data_key` entry
-// in the database. Be sure to take into account upgrades when changing this.
-struct StateDataKeys {
-	static const string version;
-	static const string artifact_name;
-	static const string artifact_group;
-	static const string artifact_provides;
-	static const string artifact_clears_provides;
-	static const string payload_types;
-};
-struct StateData {
-	int version;
-	string artifact_name;
-	string artifact_group;
-	optional<unordered_map<string, string>> artifact_provides;
-	optional<vector<string>> artifact_clears_provides;
-	vector<string> payload_types;
-};
-using ExpectedOptionalStateData = expected::expected<optional<StateData>, error::Error>;
-
 // Standalone script states:
 //
 // Download
@@ -73,28 +48,6 @@ using ExpectedOptionalStateData = expected::expected<optional<StateData>, error:
 // ArtifactCommit (Leave - no error handling)
 // ArtifactRollback - no error handling
 // ArtifactFailure - no error handling
-
-enum class Result {
-	InstalledAndCommitted,
-	Installed,
-	InstalledRebootRequired,
-	InstalledAndCommittedRebootRequired,
-	Committed,
-	InstalledButFailedInPostCommit,
-	NoUpdateInProgress,
-	RolledBack,
-	NoRollback,
-	RollbackFailed,
-	FailedNothingDone,
-	FailedAndRolledBack,
-	FailedAndNoRollback,
-	FailedAndRollbackFailed,
-};
-
-struct ResultAndError {
-	Result result;
-	error::Error err;
-};
 
 enum class InstallOptions {
 	None,
@@ -111,39 +64,48 @@ error::Error SaveStateData(database::KeyValueDatabase &db, const StateData &data
 
 error::Error RemoveStateData(database::KeyValueDatabase &db);
 
-ResultAndError Install(
-	context::MenderContext &main_context,
-	const string &src,
+ResultAndError Download(
+	StandaloneContext &context,
 	artifact::config::Signature verify_signature = artifact::config::Signature::Verify,
 	InstallOptions options = InstallOptions::None);
-ResultAndError Commit(context::MenderContext &main_context);
-ResultAndError Rollback(context::MenderContext &main_context);
+ResultAndError Install(
+	StandaloneContext &context);
+ResultAndError DownloadAndInstall(
+	StandaloneContext &context,
+	artifact::config::Signature verify_signature = artifact::config::Signature::Verify,
+	InstallOptions options = InstallOptions::None);
+ResultAndError Commit(StandaloneContext &context);
+ResultAndError Rollback(StandaloneContext &context);
 
-ResultAndError DoInstallStates(
-	context::MenderContext &main_context,
+ResultAndError DoDownloadState(
+	StandaloneContext &context,
 	StateData &data,
 	artifact::Artifact &artifact,
 	update_module::UpdateModule &update_module);
+ResultAndError DoInstallState(
+	StandaloneContext &context,
+	StateData &data,
+	update_module::UpdateModule &update_module);
 ResultAndError DoCommit(
-	context::MenderContext &main_context,
+	StandaloneContext &context,
 	StateData &data,
 	update_module::UpdateModule &update_module);
 ResultAndError DoRollback(
-	context::MenderContext &main_context,
+	StandaloneContext &context,
 	StateData &data,
 	update_module::UpdateModule &update_module);
 
 ResultAndError DoEmptyPayloadArtifact(
-	context::MenderContext &main_context,
+	StandaloneContext &context,
 	StateData &data,
 	InstallOptions options = InstallOptions::None);
 
 ResultAndError InstallationFailureHandler(
-	context::MenderContext &main_context,
+	StandaloneContext &context,
 	StateData &data,
 	update_module::UpdateModule &update_module);
 
-error::Error CommitBrokenArtifact(context::MenderContext &main_context, StateData &data);
+error::Error CommitBrokenArtifact(StandaloneContext &context, StateData &data);
 
 } // namespace standalone
 } // namespace update

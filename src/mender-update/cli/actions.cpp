@@ -76,7 +76,7 @@ static error::Error DoMaybeInstallBootstrapArtifact(context::MenderContext &main
 		return error::NoError;
 	}
 	log::Info("Installing the bootstrap Artifact");
-	auto result = standalone::Install(
+	auto result = standalone::DownloadAndInstall(
 		main_context,
 		bootstrap_artifact_path,
 		artifact::config::Signature::Skip,
@@ -171,6 +171,9 @@ static error::Error ResultHandler(standalone::ResultAndError result) {
 	}
 
 	switch (result.result) {
+	case standalone::Result::Downloaded:
+		cout << "Streamed to storage, but not installed/enabled." << endl;
+		break;
 	case standalone::Result::InstalledAndCommitted:
 	case standalone::Result::InstalledAndCommittedRebootRequired:
 		cout << "Installed and committed." << endl;
@@ -228,12 +231,21 @@ static error::Error ResultHandler(standalone::ResultAndError result) {
 	return result.err;
 }
 
+error::Error StreamAction::Execute(context::MenderContext &main_context) {
+	error::Error err = MaybeInstallBootstrapArtifact(main_context);
+	if (err != error::NoError) {
+		return err;
+	}
+	auto result = standalone::Download(main_context, src_);
+	return ResultHandler(result);
+}
+
 error::Error InstallAction::Execute(context::MenderContext &main_context) {
 	error::Error err = MaybeInstallBootstrapArtifact(main_context);
 	if (err != error::NoError) {
 		return err;
 	}
-	auto result = standalone::Install(main_context, src_);
+	auto result = standalone::DownloadAndInstall(main_context, src_);
 	err = ResultHandler(result);
 	if (!reboot_exit_code_
 		&& err.code == context::MakeError(context::RebootRequiredError, "").code) {

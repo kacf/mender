@@ -49,6 +49,18 @@ public:
 	error::Error Execute(context::MenderContext &main_context) override;
 };
 
+class StreamAction : virtual public Action {
+public:
+	StreamAction(const string &src) :
+		src_ {src} {
+	}
+
+	error::Error Execute(context::MenderContext &main_context) override;
+
+private:
+	string src_;
+};
+
 class InstallAction : virtual public Action {
 public:
 	InstallAction(const string &src, bool reboot_exit_code) :

@@ -131,6 +131,42 @@ ExpectedActionPtr ParseUpdateArguments(
 		}
 
 		return make_shared<ShowProvidesAction>();
+	} else if (start[0] == "stream") {
+		conf::CmdlineOptionsIterator iter(
+			start + 1, end, {}, conf::CommandOptsSetWithoutValue(cmd_install.options));
+		iter.SetArgumentsMode(conf::ArgumentsMode::AcceptBareArguments);
+
+		string filename;
+		while (true) {
+			auto arg = iter.Next();
+			if (!arg) {
+				return expected::unexpected(arg.error());
+			}
+
+			auto value = arg.value();
+			if (value.option != "") {
+				return expected::unexpected(
+					conf::MakeError(conf::InvalidOptionsError, "No such option: " + value.option));
+			}
+
+			if (value.value != "") {
+				if (filename != "") {
+					return expected::unexpected(conf::MakeError(
+						conf::InvalidOptionsError, "Too many arguments: " + value.value));
+				} else {
+					filename = value.value;
+				}
+			} else {
+				if (filename == "") {
+					return expected::unexpected(
+						conf::MakeError(conf::InvalidOptionsError, "Need a path to an artifact"));
+				} else {
+					break;
+				}
+			}
+		}
+
+		return make_shared<StreamAction>(filename);
 	} else if (start[0] == "install") {
 		conf::CmdlineOptionsIterator iter(
 			start + 1, end, {}, conf::CommandOptsSetWithoutValue(cmd_install.options));

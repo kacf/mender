@@ -41,6 +41,7 @@ const string StateDataKeys::artifact_group {"ArtifactGroup"};
 const string StateDataKeys::artifact_provides {"ArtifactTypeInfoProvides"};
 const string StateDataKeys::artifact_clears_provides {"ArtifactClearsProvides"};
 const string StateDataKeys::payload_types {"PayloadTypes"};
+const string StateDataKeys::completed_state {"CompletedState"};
 
 ExpectedOptionalStateData LoadStateData(database::KeyValueDatabase &db) {
 	StateDataKeys keys;
@@ -67,6 +68,12 @@ ExpectedOptionalStateData LoadStateData(database::KeyValueDatabase &db) {
 		return expected::unexpected(exp_int.error());
 	}
 	dst.version = exp_int.value();
+
+	if (dst.version != 1 && dst.version != context::MenderContext::standalone_data_version) {
+		return expected::unexpected(error::Error(
+			make_error_condition(errc::not_supported),
+			"State data has a version which is not supported by this client"));
+	}
 
 	auto exp_string = json::Get<string>(json, keys.artifact_name, json::MissingOk::No);
 	if (!exp_string) {
@@ -101,10 +108,23 @@ ExpectedOptionalStateData LoadStateData(database::KeyValueDatabase &db) {
 	}
 	dst.payload_types = exp_array.value();
 
-	if (dst.version != context::MenderContext::standalone_data_version) {
-		return expected::unexpected(error::Error(
-			make_error_condition(errc::not_supported),
-			"State data has a version which is not supported by this client"));
+	if (dst.version == 1) {
+		// In version 1, if there is any data at all, it is equivalent to this:
+		dst.completed_state = "ArtifactInstall";
+
+		// Additionally, there is never any situation where we want to save version 1 data,
+		// because it only has one state: The one we just loaded in the previous
+		// statement. In a rollback situation, all states are always carried out and the
+		// data is removed instead. Therefore, always set it to version 2, so we can't even
+		// theoretically save it wrongly (and we don't need to handle it in the saving
+		// code).
+		dst.version = context::MenderContext::standalone_data_version;
+	} else {
+		exp_string = json::Get<string>(json, keys.completed_state, json::MissingOk::No);
+		if (!exp_string) {
+			return expected::unexpected(exp_string.error());
+		}
+		dst.completed_state = exp_string.value();
 	}
 
 	if (dst.artifact_name == "") {
@@ -189,6 +209,8 @@ error::Error SaveStateData(database::KeyValueDatabase &db, const StateData &data
 		ss << "]";
 	}
 
+	ss << R"(,"CompletedState":")" << data.completed_state << R"(")";
+
 	ss << "}";
 
 	string strdata = ss.str();
@@ -260,7 +282,7 @@ static io::ExpectedReaderPtr ReaderFromUrl(
 	return make_shared<events::io::ReaderFromAsyncReader>(loop, reader);
 }
 
-ResultAndError Install(
+ResultAndError Download(
 	context::MenderContext &main_context,
 	const string &src,
 	const artifact::config::Signature verify_signature,
@@ -329,10 +351,6 @@ ResultAndError Install(
 	}
 	auto &header = exp_header.value();
 
-	if (options != InstallOptions::NoStdout) {
-		cout << "Installing artifact..." << endl;
-	}
-
 	if (header.header.payload_type == "") {
 		auto data = StateDataFromPayloadHeaderView(header);
 		return DoEmptyPayloadArtifact(main_context, data, options);
@@ -357,13 +375,95 @@ ResultAndError Install(
 		return {Result::FailedNothingDone, err};
 	}
 
+	auto result = DoDownloadState(main_context, data, parser, update_module);
+	if (result.result != Result::Downloaded) {
+		return result;
+	}
+
+	data.completed_state = "Download";
 	err = SaveStateData(main_context.GetMenderStoreDB(), data);
 	if (err != error::NoError) {
 		err = err.FollowedBy(update_module.Cleanup());
+		// Yes, we downloaded, but remember that the Download state is not supposed to have
+		// any system-visible effects.
 		return {Result::FailedNothingDone, err};
 	}
 
-	return DoInstallStates(main_context, data, parser, update_module);
+	if (options != InstallOptions::NoStdout) {
+		cout << "Installing artifact..." << endl;
+	}
+
+	return result;
+}
+
+ResultAndError Install(context::MenderContext &main_context) {
+	auto exp_in_progress = LoadStateData(main_context.GetMenderStoreDB());
+	if (!exp_in_progress) {
+		return {Result::FailedNothingDone, exp_in_progress.error()};
+	}
+	auto &in_progress = exp_in_progress.value();
+
+	if (!in_progress) {
+		return {
+			Result::NoUpdateInProgress,
+			context::MakeError(context::NoUpdateInProgressError, "Cannot install")};
+	}
+	auto &data = in_progress.value();
+
+	if (data.completed_state != "Download") {
+		return {Result::FailedNothingDone, context::MakeError(context::WrongOperationError,
+			"Resuming an install can only be done after streaming an artifact first")};
+	}
+
+	update_module::UpdateModule update_module(main_context, data.payload_types[0]);
+
+	error::Error err;
+	auto result = DoInstallState(main_context, data, update_module);
+	switch (result.result) {
+	case Result::Installed:
+	case Result::InstalledRebootRequired:
+		data.completed_state = "ArtifactInstall";
+		err = SaveStateData(main_context.GetMenderStoreDB(), data);
+		if (err != error::NoError) {
+			return InstallationFailureHandler(main_context, data, update_module);
+		}
+		break;
+	case Result::InstalledAndCommitted:
+	case Result::InstalledAndCommittedRebootRequired:
+	case Result::InstalledButFailedInPostCommit:
+	case Result::FailedNothingDone:
+	case Result::FailedAndRolledBack:
+	case Result::FailedAndNoRollback:
+	case Result::FailedAndRollbackFailed:
+		// All other results do not need to save anything, because we completed in one way
+		// or another. We are spelling out every state though, just to make sure this code
+		// is revisited if anything is added.
+		break;
+	case Result::NoUpdateInProgress:
+	case Result::Downloaded:
+	case Result::Committed:
+	case Result::RolledBack:
+	case Result::NoRollback:
+	case Result::RollbackFailed:
+		// These should not happen from here.
+		assert(false);
+		return {Result::FailedAndRollbackFailed, error::MakeError(error::ProgrammingError, "Should not reach state " + to_string(static_cast<int>(result.result)) + " from here")};
+	}
+
+	return result;
+}
+
+ResultAndError DownloadAndInstall(
+	context::MenderContext &main_context,
+	const string &src,
+	const artifact::config::Signature verify_signature,
+	InstallOptions options) {
+	auto result = Download(main_context, src, verify_signature, options);
+	if (result.result != Result::Downloaded) {
+		return result;
+	}
+
+	return Install(main_context);
 }
 
 ResultAndError Commit(context::MenderContext &main_context) {
@@ -379,6 +479,12 @@ ResultAndError Commit(context::MenderContext &main_context) {
 			context::MakeError(context::NoUpdateInProgressError, "Cannot commit")};
 	}
 	auto &data = in_progress.value();
+
+	if (data.completed_state != "ArtifactInstall") {
+		return {Result::FailedNothingDone, context::MakeError(context::WrongOperationError,
+			"Cannot commit from this state. "
+			"Make sure that the `install` command has run successfully and the device is expecting a commit.")};
+	}
 
 	update_module::UpdateModule update_module(main_context, data.payload_types[0]);
 
@@ -406,6 +512,12 @@ ResultAndError Rollback(context::MenderContext &main_context) {
 			context::MakeError(context::NoUpdateInProgressError, "Cannot roll back")};
 	}
 	auto &data = in_progress.value();
+
+	if (data.completed_state != "ArtifactInstall") {
+		return {Result::FailedNothingDone, context::MakeError(context::WrongOperationError,
+			"Cannot roll back from this state. "
+			"Make sure that the `install` command has run successfully and the device is ready to roll back.")};
+	}
 
 	update_module::UpdateModule update_module(main_context, data.payload_types[0]);
 
@@ -444,7 +556,7 @@ ResultAndError Rollback(context::MenderContext &main_context) {
 	return result;
 }
 
-ResultAndError DoInstallStates(
+ResultAndError DoDownloadState(
 	context::MenderContext &main_context,
 	StateData &data,
 	artifact::Artifact &artifact,
@@ -521,9 +633,25 @@ ResultAndError DoInstallStates(
 		return {Result::FailedNothingDone, err};
 	}
 
+	return {Result::Downloaded, error::NoError};
+}
+
+ResultAndError DoInstallState(
+	context::MenderContext &main_context,
+	StateData &data,
+	update_module::UpdateModule &update_module) {
+	const auto &default_paths {main_context.GetConfig().paths};
+	events::EventLoop loop;
+	auto script_runner {executor::ScriptRunner(
+		loop,
+		chrono::seconds {main_context.GetConfig().state_script_timeout_seconds},
+		chrono::seconds {main_context.GetConfig().state_script_retry_interval_seconds},
+		chrono::seconds {main_context.GetConfig().state_script_retry_timeout_seconds},
+		default_paths.GetArtScriptsPath(),
+		default_paths.GetRootfsScriptsPath())};
 
 	// Install Enter
-	err = script_runner.RunScripts(executor::State::ArtifactInstall, executor::Action::Enter);
+	auto err = script_runner.RunScripts(executor::State::ArtifactInstall, executor::Action::Enter);
 	if (err != error::NoError) {
 		auto install_leave_error {
 			script_runner.RunScripts(executor::State::ArtifactInstall, executor::Action::Error)};
@@ -705,6 +833,7 @@ ResultAndError DoRollback(
 ResultAndError DoEmptyPayloadArtifact(
 	context::MenderContext &main_context, StateData &data, InstallOptions options) {
 	if (options != InstallOptions::NoStdout) {
+		cout << "Installing artifact..." << endl;
 		cout << "Artifact with empty payload. Committing immediately." << endl;
 	}
 

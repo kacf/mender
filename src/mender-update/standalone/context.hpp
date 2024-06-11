@@ -21,6 +21,8 @@
 #include <common/expected.hpp>
 #include <common/optional.hpp>
 
+#include <artifact/artifact.hpp>
+
 #include <mender-update/update_module/v3/update_module.hpp>
 
 namespace mender {
@@ -63,19 +65,23 @@ struct StateData {
 };
 using ExpectedOptionalStateData = expected::expected<optional<StateData>, error::Error>;
 
+// Keep this enum sorted by the order they can occur in. Things that cannot occur in the same run
+// can be on the same level.
 enum class Result {
+	NothingDone,
+	NoUpdateInProgress,
 	Downloaded,
-	InstalledAndCommitted,
 	Installed,
 	InstalledRebootRequired,
+	InstalledAndCommitted,
 	InstalledAndCommittedRebootRequired,
 	Committed,
 	InstalledButFailedInPostCommit,
-	NoUpdateInProgress,
-	RolledBack,
 	NoRollback,
+	RolledBack,
 	RollbackFailed,
 	FailedNothingDone,
+	FailedNoRollbackAttempted,
 	FailedAndRolledBack,
 	FailedAndNoRollback,
 	FailedAndRollbackFailed,
@@ -86,20 +92,26 @@ struct ResultAndError {
 	error::Error err;
 };
 
-struct StandaloneContext {
+enum class InstallOptions {
+	None,
+	NoStdout,
+};
+
+struct Context {
+	events::EventLoop loop;
+
 	context::MenderContext main_context;
 	StateData state_data;
 
 	string artifact_src;
 
 	unique_ptr<update_module::UpdateModule> update_module;
+	unique_ptr<executor::ScriptRunner> script_runner;
+
+	artifact::config::Signature verify_signature;
+	InstallOptions options;
 
 	ResultAndError result_and_error;
-};
-
-enum class StateEvent {
-	Success,
-	Failure,
 };
 
 } // namespace standalone

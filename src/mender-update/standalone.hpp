@@ -49,11 +49,6 @@ namespace artifact = mender::artifact;
 // ArtifactRollback - no error handling
 // ArtifactFailure - no error handling
 
-enum class InstallOptions {
-	None,
-	NoStdout,
-};
-
 // Return true if there is standalone data (indicating that an update is in progress), false if not.
 // Note: StateData is expected to be empty. IOW it will not clear fields that happen to be
 // empty in the database.

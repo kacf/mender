@@ -48,9 +48,57 @@ public:
 	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
 };
 
-class DownloadState : virtual public StateType {
+class ArtifactInstallState : virtual public StateType {
 public:
 	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+};
+
+class RebootAndRollbackQueryState : virtual public StateType {
+public:
+	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+};
+
+class ArtifactCommitState : virtual public StateType {
+public:
+	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+};
+
+class RollbackQueryState : virtual public StateType {
+public:
+	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+};
+
+class ArtifactRollbackState : virtual public StateType {
+public:
+	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+};
+
+class ArtifactFailureState : virtual public StateType {
+public:
+	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+};
+
+class CleanupState : virtual public StateType {
+public:
+	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+};
+
+class ScriptRunnerState : virtual public StateType {
+public:
+	ScriptRunnerState(executor::State state, executor::Action action, executor::OnError on_error, Result result_on_error) :
+		state_ {state},
+		action_ {action},
+		on_error_ {on_error},
+		result_on_error_ {result_on_error} {
+	}
+
+	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+
+private:
+	executor::State state_;
+	executor::Action action_;
+	executor::OnError on_error_;
+	Result result_on_error_;
 };
 
 } // namespace standalone

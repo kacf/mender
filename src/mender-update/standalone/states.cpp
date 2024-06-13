@@ -353,6 +353,18 @@ void CleanupState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 	poster.PostEvent(StateEvent::Success);
 }
 
+void ScriptRunnerState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
+	auto err = script_runner.RunScripts(state_, action_, on_error_);
+	if (err != error::NoError) {
+		log::Error("Error executing script: " + err.String());
+		UpdateResult(ctx.result_and_error, {result_on_error_, err});
+		poster.PostEvent(StateEvent::Failure);
+		return;
+	}
+
+	poster.PostEvent(StateEvent::Success);
+}
+
 } // namespace standalone
 } // namespace update
 } // namespace mender

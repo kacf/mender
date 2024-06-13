@@ -68,6 +68,8 @@ using ExpectedOptionalStateData = expected::expected<optional<StateData>, error:
 // Keep this enum sorted by the order they can occur in. Things that cannot occur in the same run
 // can be on the same level.
 enum class Result {
+	NoResult,
+
 	NothingDone,
 	NoUpdateInProgress,
 	Downloaded,

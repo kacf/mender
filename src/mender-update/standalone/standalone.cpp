@@ -223,6 +223,22 @@ error::Error RemoveStateData(database::KeyValueDatabase &db) {
 	return db.Remove(context::MenderContext::standalone_state_key);
 }
 
+StateMachine::StateMachine() :
+	download_enter_state_ {Executor::State::Download, executor::Action::Enter, executor::OnError::Fail, Result::FailedNothingDone},
+	download_leave_state_ {Executor::State::Download, executor::Action::Leave, executor::OnError::Fail, Result::FailedNothingDone},
+	download_error_state_ {Executor::State::Download, executor::Action::Error, executor::OnError::Ignore, Result::NoResult},
+	artifact_install_enter_state_ {Executor::State::ArtifactInstall, executor::Action::Enter, executor::OnError::Fail, Result::FailedNoRollbackAttempted},
+	artifact_install_leave_state_ {Executor::State::ArtifactInstall, executor::Action::Leave, executor::OnError::Fail, Result::FailedNoRollbackAttempted},
+	artifact_install_error_state_ {Executor::State::ArtifactInstall, executor::Action::Error, executor::OnError::Ignore, Result::NoResult},
+	artifact_commit_enter_state_ {Executor::State::ArtifactCommit, executor::Action::Enter, executor::OnError::Fail, Result::FailedNoRollbackAttempted},
+	artifact_commit_leave_state_ {Executor::State::ArtifactCommit, executor::Action::Leave, executor::OnError::Ignore, Result::InstalledButFailedInPostCommit},
+	artifact_commit_error_state_ {Executor::State::ArtifactCommit, executor::Action::Error, executor::OnError::Ignore, Result::NoResult},
+	artifact_rollback_enter_state_ {Executor::State::ArtifactRollback, executor::Action::Enter, executor::OnError::Ignore, Result::FailedAndRollbackFailed},
+	artifact_rollback_leave_state_ {Executor::State::ArtifactRollback, executor::Action::Leave, executor::OnError::Ignore, Result::NoResult},
+	artifact_failure_enter_state_ {Executor::State::ArtifactFailure, executor::Action::Enter, executor::OnError::Ignore, Result::FailedAndRollbackFailed},
+	artifact_failure_leave_state_ {Executor::State::ArtifactFailure, executor::Action::Leave, executor::OnError::Ignore, Result::NoResult} {
+}
+
 static io::ExpectedReaderPtr ReaderFromUrl(
 	events::EventLoop &loop, http::Client &http_client, const string &src) {
 	auto req = make_shared<http::OutgoingRequest>();

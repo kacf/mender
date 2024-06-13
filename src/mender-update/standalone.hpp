@@ -59,6 +59,41 @@ error::Error SaveStateData(database::KeyValueDatabase &db, const StateData &data
 
 error::Error RemoveStateData(database::KeyValueDatabase &db);
 
+class StateMachine {
+public:
+	StateMachine();
+
+private:
+	ScriptRunnerState download_enter_state_;
+	DownloadState download_state_;
+	ScriptRunnerState download_leave_state_;
+	ScriptRunnerState download_error_state_;
+
+	ScriptRunnerState artifact_install_enter_state_;
+	ArtifactInstallState artifact_install_state_;
+	ScriptRunnerState artifact_install_leave_state_;
+	ScriptRunnerState artifact_install_error_state_;
+
+	RebootAndRollbackQueryState reboot_and_rollback_query_state_;
+
+	ScriptRunnerState artifact_commit_enter_state_;
+	ArtifactCommitState artifact_commit_state_;
+	ScriptRunnerState artifact_commit_leave_state_;
+	ScriptRunnerState artifact_commit_error_state_;
+
+	RollbackQueryState rollback_query_state_;
+
+	ScriptRunnerState artifact_rollback_enter_state_;
+	ArtifactRollbackState artifact_rollback_state_;
+	ScriptRunnerState artifact_rollback_leave_state_;
+
+	ScriptRunnerState artifact_failure_enter_state_;
+	ArtifactFailureState artifact_failure_state_;
+	ScriptRunnerState artifact_failure_leave_state_;
+
+	CleanupState cleanup_state_;
+};
+
 ResultAndError Download(
 	StandaloneContext &context,
 	artifact::config::Signature verify_signature = artifact::config::Signature::Verify,

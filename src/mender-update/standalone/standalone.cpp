@@ -224,6 +224,7 @@ error::Error RemoveStateData(database::KeyValueDatabase &db) {
 }
 
 StateMachine::StateMachine() :
+	state_machine_ {start_state_},
 	download_enter_state_ {Executor::State::Download, executor::Action::Enter, executor::OnError::Fail, Result::FailedNothingDone},
 	download_leave_state_ {Executor::State::Download, executor::Action::Leave, executor::OnError::Fail, Result::FailedNothingDone},
 	download_error_state_ {Executor::State::Download, executor::Action::Error, executor::OnError::Ignore, Result::NoResult},
@@ -237,6 +238,72 @@ StateMachine::StateMachine() :
 	artifact_rollback_leave_state_ {Executor::State::ArtifactRollback, executor::Action::Leave, executor::OnError::Ignore, Result::NoResult},
 	artifact_failure_enter_state_ {Executor::State::ArtifactFailure, executor::Action::Enter, executor::OnError::Ignore, Result::FailedAndRollbackFailed},
 	artifact_failure_leave_state_ {Executor::State::ArtifactFailure, executor::Action::Leave, executor::OnError::Ignore, Result::NoResult} {
+	namespace sm = common::state_machine;
+	using se = StateEvent;
+	auto &s = state_machine_;
+
+	// clang-format off
+	s.AddTransition(download_enter_state_,            se::Success,          download_state_,                  sm::Immediate);
+	s.AddTransition(download_enter_state_,            se::Failure,          download_error_state_,            sm::Immediate);
+
+	s.AddTransition(download_state_,                  se::Success,          download_leave_state_,            sm::Immediate);
+	s.AddTransition(download_state_,                  se::Failure,          download_error_state_,            sm::Immediate);
+
+	s.AddTransition(download_leave_state_,            se::Success,          artifact_install_enter_state_,    sm::Immediate);
+	s.AddTransition(download_leave_state_,            se::Failure,          download_error_state_,            sm::Immediate);
+
+	s.AddTransition(download_error_state_,            se::Success,          cleanup_state_,                   sm::Immediate);
+	s.AddTransition(download_error_state_,            se::Failure,          cleanup_state_,                   sm::Immediate);
+
+	s.AddTransition(artifact_install_enter_state_,    se::Success,          artifact_install_state_,          sm::Immediate);
+	s.AddTransition(artifact_install_enter_state_,    se::Failure,          artifact_install_error_state_,    sm::Immediate);
+
+	s.AddTransition(artifact_install_state_,          se::Success,          artifact_install_leave_state_,    sm::Immediate);
+	s.AddTransition(artifact_install_state_,          se::Failure,          artifact_install_error_state_,    sm::Immediate);
+
+	s.AddTransition(artifact_install_leave_state_,    se::Success,          reboot_and_rollback_query_state_, sm::Immediate);
+	s.AddTransition(artifact_install_leave_state_,    se::Failure,          artifact_install_error_state_,    sm::Immediate);
+
+	s.AddTransition(artifact_install_error_state_,    se::Success,          rollback_query_state_,            sm::Immediate);
+	s.AddTransition(artifact_install_error_state_,    se::Failure,          rollback_query_state_,            sm::Immediate);
+
+	s.AddTransition(reboot_and_rollback_query_state_, se::Success,          artifact_commit_enter_state_,     sm::Immediate);
+	s.AddTransition(reboot_and_rollback_query_state_, se::Failure,          rollback_query_state_,            sm::Immediate);
+	s.AddTransition(reboot_and_rollback_query_state_, se::NeedsInteraction, exit_state_,                      sm::Immediate);
+
+	s.AddTransition(artifact_commit_enter_state_,     se::Success,          artifact_commit_state_,           sm::Immediate);
+	s.AddTransition(artifact_commit_enter_state_,     se::Failure,          artifact_commit_error_state_,     sm::Immediate);
+
+	s.AddTransition(artifact_commit_state_,           se::Success,          artifact_commit_leave_state_,     sm::Immediate);
+	s.AddTransition(artifact_commit_state_,           se::Failure,          artifact_commit_error_state_,     sm::Immediate);
+
+	s.AddTransition(artifact_commit_leave_state_,     se::Success,          cleanup_state_,                   sm::Immediate);
+	s.AddTransition(artifact_commit_leave_state_,     se::Failure,          cleanup_state_,                   sm::Immediate);
+
+	s.AddTransition(artifact_commit_error_state_,     se::Success,          rollback_query_state_,            sm::Immediate);
+	s.AddTransition(artifact_commit_error_state_,     se::Failure,          rollback_query_state_,            sm::Immediate);
+
+	s.AddTransition(artifact_rollback_enter_state_,   se::Success,          artifact_rollback_state_,         sm::Immediate);
+	s.AddTransition(artifact_rollback_enter_state_,   se::Failure,          artifact_rollback_state_,         sm::Immediate);
+
+	s.AddTransition(artifact_rollback_state_,         se::Success,          artifact_rollback_leave_state_,   sm::Immediate);
+	s.AddTransition(artifact_rollback_state_,         se::Failure,          artifact_rollback_leave_state_,   sm::Immediate);
+
+	s.AddTransition(artifact_rollback_leave_state_,   se::Success,          artifact_failure_state_,          sm::Immediate);
+	s.AddTransition(artifact_rollback_leave_state_,   se::Failure,          artifact_failure_error_state_,    sm::Immediate);
+
+	s.AddTransition(artifact_failure_enter_state_,    se::Success,          artifact_failure_state_,          sm::Immediate);
+	s.AddTransition(artifact_failure_enter_state_,    se::Failure,          artifact_failure_state_,          sm::Immediate);
+
+	s.AddTransition(artifact_failure_state_,          se::Success,          artifact_failure_leave_state_,    sm::Immediate);
+	s.AddTransition(artifact_failure_state_,          se::Failure,          artifact_failure_leave_state_,    sm::Immediate);
+
+	s.AddTransition(artifact_failure_leave_state_,    se::Success,          cleanup_state_,                   sm::Immediate);
+	s.AddTransition(artifact_failure_leave_state_,    se::Failure,          cleanup_state_,                   sm::Immediate);
+
+	s.AddTransition(cleanup_state_,                   se::Success,          exit_state_,                      sm::Immediate);
+	s.AddTransition(cleanup_state_,                   se::Failure,          exit_state_,                      sm::Immediate);
+	// clang-format on
 }
 
 static io::ExpectedReaderPtr ReaderFromUrl(

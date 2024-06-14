@@ -64,6 +64,8 @@ public:
 	StateMachine();
 
 private:
+	common::state_machine::StateMachine state_machine_;
+
 	ScriptRunnerState download_enter_state_;
 	DownloadState download_state_;
 	ScriptRunnerState download_leave_state_;

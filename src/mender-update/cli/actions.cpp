@@ -76,8 +76,10 @@ static error::Error DoMaybeInstallBootstrapArtifact(context::MenderContext &main
 		return error::NoError;
 	}
 	log::Info("Installing the bootstrap Artifact");
-	auto result = standalone::DownloadAndInstall(
-		main_context,
+	events::EventLoop loop;
+	standalone::Context ctx {main_context, loop};
+	auto result = standalone::Install(
+		ctx,
 		bootstrap_artifact_path,
 		artifact::config::Signature::Skip,
 		standalone::InstallOptions::NoStdout);
@@ -146,6 +148,8 @@ error::Error ShowProvidesAction::Execute(context::MenderContext &main_context) {
 }
 
 static error::Error ResultHandler(standalone::ResultAndError result) {
+	using Result = standalone::Result;
+
 	if (result.err != error::NoError) {
 		log::Error(result.err.String());
 	} else if (ResultContains(result.result, Result::Failed)) {
@@ -175,7 +179,7 @@ static error::Error ResultHandler(standalone::ResultAndError result) {
 		} else if (ResultContains(result.result, Result::RollbackFailed)) {
 			cout << "Rollback failed. System may be in an inconsistent state." << endl;
 		} else {
-			log::Error("Unexpected result value: 0x" + (stringstream() << std::hex << result.result).str());
+			log::Error("Unexpected result value: 0x" + (stringstream() << std::hex << static_cast<int>(result.result)).str());
 		}
 	} else if (ResultIs(result.result, Result::RolledBack)) {
 		cout << "Rolled back." << endl;
@@ -191,7 +195,7 @@ static error::Error ResultHandler(standalone::ResultAndError result) {
 	} else if (ResultContains(result.result, Result::Committed)) {
 		cout << "Committed." << endl;
 	} else {
-		log::Error("Unexpected result value: 0x" + (stringstream() << std::hex << result.result).str());
+		log::Error("Unexpected result value: 0x" + (stringstream() << std::hex << static_cast<int>(result.result)).str());
 	}
 
 	if (ResultContains(result.result, Result::RebootRequired)) {
@@ -209,8 +213,10 @@ error::Error StreamAction::Execute(context::MenderContext &main_context) {
 	if (err != error::NoError) {
 		return err;
 	}
-	auto result = standalone::Download(main_context, src_);
-	return ResultHandler(result);
+	// TODO
+	// auto result = standalone::Download(main_context, src_);
+	// return ResultHandler(result);
+	return error::NoError;
 }
 
 error::Error InstallAction::Execute(context::MenderContext &main_context) {
@@ -218,7 +224,9 @@ error::Error InstallAction::Execute(context::MenderContext &main_context) {
 	if (err != error::NoError) {
 		return err;
 	}
-	auto result = standalone::DownloadAndInstall(main_context, src_);
+	events::EventLoop loop;
+	standalone::Context ctx {main_context, loop};
+	auto result = standalone::Install(ctx, src_);
 	err = ResultHandler(result);
 	if (!reboot_exit_code_
 		&& err.code == context::MakeError(context::RebootRequiredError, "").code) {
@@ -230,12 +238,16 @@ error::Error InstallAction::Execute(context::MenderContext &main_context) {
 }
 
 error::Error CommitAction::Execute(context::MenderContext &main_context) {
-	auto result = standalone::Commit(main_context);
+	events::EventLoop loop;
+	standalone::Context ctx {main_context, loop};
+	auto result = standalone::Commit(ctx);
 	return ResultHandler(result);
 }
 
 error::Error RollbackAction::Execute(context::MenderContext &main_context) {
-	auto result = standalone::Rollback(main_context);
+	events::EventLoop loop;
+	standalone::Context ctx {main_context, loop};
+	auto result = standalone::Rollback(ctx);
 	return ResultHandler(result);
 }
 

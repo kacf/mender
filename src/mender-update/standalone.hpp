@@ -112,9 +112,13 @@ private:
 	common::state_machine::StateMachine<Context, StateEvent> state_machine_;
 };
 
-ResultAndError Download(Context &context);
-ResultAndError Install(Context &context);
-ResultAndError DownloadAndInstall(Context &context);
+ResultAndError Install(
+	standalone::Context &main_context,
+	const string &src,
+	artifact::config::Signature verify_signature = artifact::config::Signature::Verify,
+	InstallOptions options = InstallOptions::None);
+
+ResultAndError Resume(Context &context);
 ResultAndError Commit(Context &context);
 ResultAndError Rollback(Context &context);
 

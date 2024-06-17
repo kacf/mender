@@ -35,14 +35,6 @@ namespace io = mender::common::io;
 namespace log = mender::common::log;
 namespace path = mender::common::path;
 
-const string StateDataKeys::version {"Version"};
-const string StateDataKeys::artifact_name {"ArtifactName"};
-const string StateDataKeys::artifact_group {"ArtifactGroup"};
-const string StateDataKeys::artifact_provides {"ArtifactTypeInfoProvides"};
-const string StateDataKeys::artifact_clears_provides {"ArtifactClearsProvides"};
-const string StateDataKeys::payload_types {"PayloadTypes"};
-const string StateDataKeys::completed_state {"CompletedState"};
-
 ExpectedOptionalStateData LoadStateData(database::KeyValueDatabase &db) {
 	StateDataKeys keys;
 	StateData dst;
@@ -377,7 +369,7 @@ error::Error PrepareUpdateModuleFromStateData(Context &ctx, const StateData &dat
 	return error::NoError;
 }
 
-ResultAndError Download(
+ResultAndError Install(
 	Context &context,
 	const string &src,
 	const artifact::config::Signature verify_signature,
@@ -400,6 +392,10 @@ ResultAndError Download(
 	if (err != error::NoError) {
 		return {Result::Failed, err};
 	}
+
+	context.artifact_src = src;
+	context.verify_signature = verify_signature;
+	context.options = options;
 
 	StateMachine state_machine {context};
 	state_machine.Run();

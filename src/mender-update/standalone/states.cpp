@@ -162,8 +162,6 @@ error::Error DoDownloadState(Context &ctx) {
 	return error::NoError;
 }
 
-// TODO Go through all UpdateResult and make sure they have right parameters.
-// TODO Check that all returns and functions ends have events.
 // TODO Check that all return paths have UpdateResults at all, including function ends (by every postevent)
 
 StateData StateDataFromPayloadHeaderView(const artifact::PayloadHeaderView &header) {
@@ -293,6 +291,7 @@ void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 		return;
 	}
 
+	UpdateResult(ctx.result_and_error, {Result::Downloaded, error::NoError});
 	poster.PostEvent(StateEvent::Success);
 }
 
@@ -309,6 +308,7 @@ void ArtifactInstallState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 		return;
 	}
 
+	UpdateResult(ctx.result_and_error, {Result::Installed, error::NoError});
 	poster.PostEvent(StateEvent::Success);
 }
 
@@ -350,7 +350,6 @@ void ArtifactCommitState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &pos
 		return;
 	}
 
-	UpdateResult(ctx.result_and_error, {Result::Installed, error::NoError});
 	poster.PostEvent(StateEvent::Success);
 }
 

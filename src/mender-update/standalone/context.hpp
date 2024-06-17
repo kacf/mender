@@ -127,9 +127,14 @@ enum class InstallOptions {
 };
 
 struct Context {
-	events::EventLoop loop;
+	Context(context::MenderContext &main_context, events::EventLoop &loop) :
+		main_context {main_context},
+		loop {loop} {
+	}
 
-	context::MenderContext main_context;
+	context::MenderContext &main_context;
+	events::EventLoop &loop;
+
 	StateData state_data;
 
 	string artifact_src;

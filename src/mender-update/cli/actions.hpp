@@ -28,6 +28,7 @@ using namespace std;
 
 namespace error = mender::common::error;
 namespace expected = mender::common::expected;
+
 namespace context = mender::update::context;
 
 class Action {

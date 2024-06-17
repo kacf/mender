@@ -30,19 +30,6 @@ namespace sm = mender::common::state_machine;
 
 using StateType = sm::State<Context, StateEvent>;
 
-class SaveState : virtual public StateType {
-public:
-	// Sub states should implement OnEnterSaveState instead, since we do state saving in
-	// here. Note that not all states that participate in an update are SaveStates that get
-	// their database key saved. Some states are not because it's good enough to rely on the
-	// previously saved state.
-	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override final;
-
-	virtual void OnEnterSaveState(Context &ctx, sm::EventPoster<StateEvent> &poster) = 0;
-	virtual const string &DatabaseStateString() const = 0;
-	virtual bool IsFailureState() const = 0;
-};
-
 class StateDataSaveState : virtual public StateType {
 public:
 	StateDataSaveState(const string &state) :
@@ -110,6 +97,18 @@ private:
 	executor::Action action_;
 	executor::OnError on_error_;
 	Result result_on_error_;
+};
+
+class ExitState : virtual public StateType {
+public:
+	ExitState(events::EventLoop &loop) :
+		loop_ {loop} {
+	}
+
+	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+
+private:
+	events::EventLoop &loop_;
 };
 
 } // namespace standalone

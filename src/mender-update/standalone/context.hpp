@@ -18,10 +18,11 @@
 #include <unordered_map>
 
 #include <common/error.hpp>
+#include <common/events.hpp>
 #include <common/expected.hpp>
 #include <common/optional.hpp>
 
-#include <artifact/artifact.hpp>
+#include <artifact/v3/scripts/executor.hpp>
 
 #include <mender-update/update_module/v3/update_module.hpp>
 
@@ -31,8 +32,13 @@ namespace standalone {
 
 using namespace std;
 
-namespace context = mender::update::context;
+namespace error = mender::common::error;
+namespace events = mender::common::events;
+namespace expected = mender::common::expected;
 
+namespace executor = mender::artifact::scripts::executor;
+
+namespace context = mender::update::context;
 namespace update_module = mender::update::update_module::v3;
 
 // The keys and data, respectively, of the JSON object living under the `standalone_data_key` entry
@@ -95,8 +101,15 @@ enum class Result {
 	RollbackFailed = 0x200,
 };
 
+// enum classes cannot ordinarily be used as bit flags, but let's provide some convenience functions
+// so that we can use it as such while still getting some of the type safety. What we don't get,
+// obviously, is that a variable is not guaranteed to be any of the above values.
+inline Result operator|(Result a, Result b) {
+	return static_cast<Result>(static_cast<int>(a) | static_cast<int>(b));
+}
+
 inline bool ResultIs(Result result, Result flags) {
-	return static_cast<int>(result) == static_cast<int>(flags);
+	return result == flags;
 }
 
 inline bool ResultContains(Result result, Result flags) {

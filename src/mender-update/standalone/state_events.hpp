@@ -33,6 +33,12 @@ inline std::string StateEventToString(const StateEvent &event) {
 		return "Success";
 	case StateEvent::Failure:
 		return "Failure";
+	case StateEvent::NothingToDo:
+		return "NothingToDo";
+	case StateEvent::NeedsInteraction:
+		return "NeedsInteraction";
+	case StateEvent::EmptyPayloadArtifact:
+		return "EmptyPayloadArtifact";
 	}
 	assert(false);
 	return "MissingStateInSwitchStatement";

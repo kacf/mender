@@ -27,6 +27,7 @@
 
 #include <mender-update/context.hpp>
 #include <mender-update/standalone/context.hpp>
+#include <mender-update/standalone/states.hpp>
 
 namespace mender {
 namespace update {
@@ -61,21 +62,19 @@ error::Error RemoveStateData(database::KeyValueDatabase &db);
 
 class StateMachine {
 public:
-	StateMachine(Context &ctx) :
-		context_ {ctx} {
-	}
+	StateMachine(Context &ctx);
 
 	error::Error SetStartStateFromLastCompleted(const string &completed_state);
 
 	void Run();
 
 private:
+	events::EventLoop loop_;
+
 	Context &context_;
 
 	// Will point to one of the states below.
-	State *start_state_;
-
-	common::state_machine::StateMachine state_machine_;
+	StateType *start_state_;
 
 	ScriptRunnerState download_enter_state_;
 	DownloadState download_state_;
@@ -105,6 +104,10 @@ private:
 	ScriptRunnerState artifact_failure_leave_state_;
 
 	CleanupState cleanup_state_;
+
+	ExitState exit_state_;
+
+	common::state_machine::StateMachine<Context, StateEvent> state_machine_;
 };
 
 ResultAndError Download(Context &context);

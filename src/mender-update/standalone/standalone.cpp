@@ -26,6 +26,7 @@ namespace mender {
 namespace update {
 namespace standalone {
 
+using namespace std;
 
 namespace common = mender::common;
 namespace events = mender::common::events;
@@ -344,19 +345,19 @@ error::Error StateMachine::SetStartStateFromLastCompleted(const string &complete
 
 error::Error PrepareContext(Context &ctx) {
 	const auto &default_paths {ctx.main_context.GetConfig().paths};
-	ctx.script_runner = make_unique<executor::ScriptRunner>(
+	ctx.script_runner.reset(new executor::ScriptRunner(
 		ctx.loop,
 		chrono::seconds {ctx.main_context.GetConfig().state_script_timeout_seconds},
 		chrono::seconds {ctx.main_context.GetConfig().state_script_retry_interval_seconds},
 		chrono::seconds {ctx.main_context.GetConfig().state_script_retry_timeout_seconds},
 		default_paths.GetArtScriptsPath(),
-		default_paths.GetRootfsScriptsPath());
+		default_paths.GetRootfsScriptsPath()));
 
 	return error::NoError;
 }
 
 error::Error PrepareUpdateModuleFromStateData(Context &ctx, const StateData &data) {
-	ctx.update_module = make_unique<update_module::UpdateModule>(ctx.main_context, data.payload_types[0]);
+	ctx.update_module.reset(new update_module::UpdateModule(ctx.main_context, data.payload_types[0]));
 
 	if (data.payload_types[0] == "rootfs-image") {
 		// Special case for rootfs-image upgrades. See comments inside the function.

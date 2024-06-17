@@ -20,6 +20,7 @@
 #include <common/error.hpp>
 #include <common/events.hpp>
 #include <common/expected.hpp>
+#include <common/io.hpp>
 #include <common/optional.hpp>
 
 #include <artifact/v3/scripts/executor.hpp>
@@ -35,6 +36,7 @@ using namespace std;
 namespace error = mender::common::error;
 namespace events = mender::common::events;
 namespace expected = mender::common::expected;
+namespace io = mender::common::io;
 
 namespace executor = mender::artifact::scripts::executor;
 
@@ -130,6 +132,7 @@ struct Context {
 	Context(context::MenderContext &main_context, events::EventLoop &loop) :
 		main_context {main_context},
 		loop {loop} {
+		result_and_error.result = Result::NoResult;
 	}
 
 	context::MenderContext &main_context;
@@ -142,7 +145,9 @@ struct Context {
 	unique_ptr<update_module::UpdateModule> update_module;
 	unique_ptr<executor::ScriptRunner> script_runner;
 
+	io::ReaderPtr artifact_reader;
 	unique_ptr<artifact::Artifact> parser;
+
 	artifact::config::Signature verify_signature;
 	InstallOptions options;
 

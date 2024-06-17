@@ -177,8 +177,6 @@ StateData StateDataFromPayloadHeaderView(const artifact::PayloadHeaderView &head
 }
 
 void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
-	io::ReaderPtr artifact_reader;
-
 	shared_ptr<events::EventLoop> event_loop;
 	http::ClientPtr http_client;
 
@@ -194,7 +192,7 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 			poster.PostEvent(StateEvent::Failure);
 			return;
 		}
-		artifact_reader = reader.value();
+		ctx.artifact_reader = reader.value();
 	} else {
 		auto stream = io::OpenIfstream(ctx.artifact_src);
 		if (!stream) {
@@ -203,11 +201,7 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 			return;
 		}
 		auto file_stream = make_shared<ifstream>(std::move(stream.value()));
-		artifact_reader = make_shared<io::StreamReader>(file_stream);
-	}
-
-	if (ctx.options != InstallOptions::NoStdout) {
-		cout << "Streaming artifact..." << endl;
+		ctx.artifact_reader = make_shared<io::StreamReader>(file_stream);
 	}
 
 	string art_scripts_path = main_context.GetConfig().paths.GetArtScriptsPath();
@@ -227,13 +221,13 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 		.verify_signature = ctx.verify_signature,
 	};
 
-	auto exp_parser = artifact::Parse(*artifact_reader, config);
+	auto exp_parser = artifact::Parse(*ctx.artifact_reader, config);
 	if (!exp_parser) {
 		UpdateResult(ctx.result_and_error, {Result::Failed, exp_parser.error()});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
-	ctx.parser = make_unique<artifact::Artifact>(std::move(exp_parser.value()));
+	ctx.parser.reset(new artifact::Artifact(std::move(exp_parser.value())));
 
 	auto exp_header = artifact::View(*ctx.parser, 0);
 	if (!exp_header) {
@@ -256,7 +250,7 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 		return;
 	}
 
-	ctx.update_module = make_unique<update_module::UpdateModule>(main_context, header.header.payload_type);
+	ctx.update_module.reset(new update_module::UpdateModule(main_context, header.header.payload_type));
 
 	err = ctx.update_module->CleanAndPrepareFileTree(ctx.update_module->GetUpdateModuleWorkDir(), header);
 	if (err != error::NoError) {
@@ -265,7 +259,7 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 		return;
 	}
 
-	StateData data = StateDataFromPayloadHeaderView(header);
+	ctx.state_data = StateDataFromPayloadHeaderView(header);
 
 	auto exp_matches = main_context.MatchesArtifactDepends(header.header);
 	if (!exp_matches) {
@@ -350,6 +344,7 @@ void ArtifactCommitState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &pos
 		return;
 	}
 
+	UpdateResult(ctx.result_and_error, {Result::Committed, error::NoError});
 	poster.PostEvent(StateEvent::Success);
 }
 

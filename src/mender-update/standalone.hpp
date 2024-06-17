@@ -96,48 +96,41 @@ private:
 	CleanupState cleanup_state_;
 };
 
-ResultAndError Download(
-	StandaloneContext &context,
-	artifact::config::Signature verify_signature = artifact::config::Signature::Verify,
-	InstallOptions options = InstallOptions::None);
-ResultAndError Install(
-	StandaloneContext &context);
-ResultAndError DownloadAndInstall(
-	StandaloneContext &context,
-	artifact::config::Signature verify_signature = artifact::config::Signature::Verify,
-	InstallOptions options = InstallOptions::None);
-ResultAndError Commit(StandaloneContext &context);
-ResultAndError Rollback(StandaloneContext &context);
+ResultAndError Download(Context &context);
+ResultAndError Install(Context &context);
+ResultAndError DownloadAndInstall(Context &context);
+ResultAndError Commit(Context &context);
+ResultAndError Rollback(Context &context);
 
 ResultAndError DoDownloadState(
-	StandaloneContext &context,
+	Context &context,
 	StateData &data,
 	artifact::Artifact &artifact,
 	update_module::UpdateModule &update_module);
 ResultAndError DoInstallState(
-	StandaloneContext &context,
+	Context &context,
 	StateData &data,
 	update_module::UpdateModule &update_module);
 ResultAndError DoCommit(
-	StandaloneContext &context,
+	Context &context,
 	StateData &data,
 	update_module::UpdateModule &update_module);
 ResultAndError DoRollback(
-	StandaloneContext &context,
+	Context &context,
 	StateData &data,
 	update_module::UpdateModule &update_module);
 
 ResultAndError DoEmptyPayloadArtifact(
-	StandaloneContext &context,
+	Context &context,
 	StateData &data,
 	InstallOptions options = InstallOptions::None);
 
 ResultAndError InstallationFailureHandler(
-	StandaloneContext &context,
+	Context &context,
 	StateData &data,
 	update_module::UpdateModule &update_module);
 
-error::Error CommitBrokenArtifact(StandaloneContext &context, StateData &data);
+error::Error CommitBrokenArtifact(Context &context, StateData &data);
 
 } // namespace standalone
 } // namespace update

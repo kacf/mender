@@ -65,29 +65,30 @@ struct StateData {
 };
 using ExpectedOptionalStateData = expected::expected<optional<StateData>, error::Error>;
 
-// Keep this enum sorted by the order they can occur in. Things that cannot occur in the same run
-// can be on the same level.
 enum class Result {
-	NoResult,
+	NoResult = 0x0,
 
-	NothingDone,
-	NoUpdateInProgress,
-	Downloaded,
-	Installed,
-	InstalledRebootRequired,
-	InstalledAndCommitted,
-	InstalledAndCommittedRebootRequired,
-	Committed,
-	InstalledButFailedInPostCommit,
-	NoRollback,
-	RolledBack,
-	RollbackFailed,
-	FailedNothingDone,
-	FailedNoRollbackAttempted,
-	FailedAndRolledBack,
-	FailedAndNoRollback,
-	FailedAndRollbackFailed,
+	// Flags
+	NothingDone = 0x0,
+	NoUpdateInProgress = 0x1,
+	Downloaded = 0x2,
+	Installed = 0x4,
+	RebootRequired = 0x8,
+	Committed = 0x10,
+	Failed = 0x20,
+	FailedInPostCommit = 0x40,
+	NoRollback = 0x80,
+	RolledBack = 0x100,
+	RollbackFailed = 0x200,
 };
+
+inline bool ResultIs(Result result, Result flags) {
+	return static_cast<int>(result) == static_cast<int>(flags);
+}
+
+inline bool ResultContains(Result result, Result flags) {
+	return (static_cast<int>(result) & static_cast<int>(flags)) == static_cast<int>(flags);
+}
 
 struct ResultAndError {
 	Result result;

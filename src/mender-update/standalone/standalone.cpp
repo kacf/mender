@@ -366,7 +366,7 @@ static io::ExpectedReaderPtr ReaderFromUrl(
 }
 
 ResultAndError Download(
-	context::MenderContext &main_context,
+	Context &context,
 	const string &src,
 	const artifact::config::Signature verify_signature,
 	InstallOptions options) {
@@ -479,7 +479,7 @@ ResultAndError Download(
 	return result;
 }
 
-ResultAndError Install(context::MenderContext &main_context) {
+ResultAndError Install(Context &context) {
 	auto exp_in_progress = LoadStateData(main_context.GetMenderStoreDB());
 	if (!exp_in_progress) {
 		return {Result::FailedNothingDone, exp_in_progress.error()};
@@ -492,11 +492,6 @@ ResultAndError Install(context::MenderContext &main_context) {
 			context::MakeError(context::NoUpdateInProgressError, "Cannot install")};
 	}
 	auto &data = in_progress.value();
-
-	if (data.completed_state != "Download") {
-		return {Result::FailedNothingDone, context::MakeError(context::WrongOperationError,
-			"Resuming an install can only be done after streaming an artifact first")};
-	}
 
 	update_module::UpdateModule update_module(main_context, data.payload_types[0]);
 
@@ -537,7 +532,7 @@ ResultAndError Install(context::MenderContext &main_context) {
 }
 
 ResultAndError DownloadAndInstall(
-	context::MenderContext &main_context,
+	Context &context,
 	const string &src,
 	const artifact::config::Signature verify_signature,
 	InstallOptions options) {
@@ -549,7 +544,7 @@ ResultAndError DownloadAndInstall(
 	return Install(main_context);
 }
 
-ResultAndError Commit(context::MenderContext &main_context) {
+ResultAndError Commit(Context &context) {
 	auto exp_in_progress = LoadStateData(main_context.GetMenderStoreDB());
 	if (!exp_in_progress) {
 		return {Result::FailedNothingDone, exp_in_progress.error()};
@@ -582,7 +577,7 @@ ResultAndError Commit(context::MenderContext &main_context) {
 	return DoCommit(main_context, data, update_module);
 }
 
-ResultAndError Rollback(context::MenderContext &main_context) {
+ResultAndError Rollback(Context &context) {
 	auto exp_in_progress = LoadStateData(main_context.GetMenderStoreDB());
 	if (!exp_in_progress) {
 		return {Result::FailedNothingDone, exp_in_progress.error()};
@@ -640,7 +635,7 @@ ResultAndError Rollback(context::MenderContext &main_context) {
 }
 
 ResultAndError DoDownloadState(
-	context::MenderContext &main_context,
+	Context &context,
 	StateData &data,
 	artifact::Artifact &artifact,
 	update_module::UpdateModule &update_module) {
@@ -720,7 +715,7 @@ ResultAndError DoDownloadState(
 }
 
 ResultAndError DoInstallState(
-	context::MenderContext &main_context,
+	Context &context,
 	StateData &data,
 	update_module::UpdateModule &update_module) {
 	const auto &default_paths {main_context.GetConfig().paths};
@@ -799,7 +794,7 @@ ResultAndError DoInstallState(
 }
 
 ResultAndError DoCommit(
-	context::MenderContext &main_context,
+	Context &context,
 	StateData &data,
 	update_module::UpdateModule &update_module) {
 	const auto &default_paths {main_context.GetConfig().paths};
@@ -873,7 +868,7 @@ ResultAndError DoCommit(
 }
 
 ResultAndError DoRollback(
-	context::MenderContext &main_context,
+	Context &context,
 	StateData &data,
 	update_module::UpdateModule &update_module) {
 	auto exp_rollback_support = update_module.SupportsRollback();
@@ -914,7 +909,7 @@ ResultAndError DoRollback(
 }
 
 ResultAndError DoEmptyPayloadArtifact(
-	context::MenderContext &main_context, StateData &data, InstallOptions options) {
+	Context &context, StateData &data, InstallOptions options) {
 	if (options != InstallOptions::NoStdout) {
 		cout << "Installing artifact..." << endl;
 		cout << "Artifact with empty payload. Committing immediately." << endl;
@@ -933,7 +928,7 @@ ResultAndError DoEmptyPayloadArtifact(
 }
 
 ResultAndError InstallationFailureHandler(
-	context::MenderContext &main_context,
+	Context &context,
 	StateData &data,
 	update_module::UpdateModule &update_module) {
 	error::Error err;

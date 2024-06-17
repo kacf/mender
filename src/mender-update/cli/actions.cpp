@@ -146,86 +146,59 @@ error::Error ShowProvidesAction::Execute(context::MenderContext &main_context) {
 }
 
 static error::Error ResultHandler(standalone::ResultAndError result) {
-	switch (result.result) {
-	case standalone::Result::InstalledAndCommitted:
-	case standalone::Result::Committed:
-	case standalone::Result::Installed:
-	case standalone::Result::RolledBack:
-		// There should not be any error for these.
-		assert(result.err == error::NoError);
-		break;
-	case standalone::Result::InstalledAndCommittedRebootRequired:
-	case standalone::Result::InstalledRebootRequired:
+	if (result.err != error::NoError) {
+		log::Error(result.err.String());
+	} else if (ResultContains(result.result, Result::Failed)) {
+		// All error states, make sure they have an error.
+		result.err = error::MakeError(error::ExitWithFailureError, "");
+	}
+
+	// This tries to capture all things that can happen in a run, but there is a catchall in
+	// case we don't.
+	if (ResultIs(result.result, Result::Failed)) {
+		cout << "Installation failed. System not modified." << endl;
+	} else if (ResultContains(result.result, Result::Failed)) {
+		if (ResultContains(result.result, Result::FailedInPostCommit)) {
+			cout << "Installed, but one or more post-commit steps failed." << endl;
+		} else if (ResultContains(result.result, Result::Installed | Result::NoRollback)) {
+			cout
+				<< "Installation failed, and Update Module does not support rollback. System may be in an inconsistent state."
+				<< endl;
+		} else if (ResultContains(result.result, Result::NoRollback)) {
+			cout << "Update Module does not support rollback." << endl;
+		} else if (ResultContains(result.result, Result::Installed | Result::RolledBack)) {
+			cout << "Installation failed. Rolled back modifications." << endl;
+		} else if (ResultContains(result.result, Result::Installed | Result::RollbackFailed)) {
+			cout
+				<< "Installation failed, and rollback also failed. System may be in an inconsistent state."
+				<< endl;
+		} else if (ResultContains(result.result, Result::RollbackFailed)) {
+			cout << "Rollback failed. System may be in an inconsistent state." << endl;
+		} else {
+			log::Error("Unexpected result value: 0x" + (stringstream() << std::hex << result.result).str());
+		}
+	} else if (ResultIs(result.result, Result::RolledBack)) {
+		cout << "Rolled back." << endl;
+	} else if (ResultIs(result.result, Result::NoUpdateInProgress)) {
+		cout << "No update in progress." << endl;
+	} else if (ResultIs(result.result, Result::Downloaded)) {
+		cout << "Streamed to storage, but not installed/enabled." << endl;
+	} else if (ResultContains(result.result, Result::Installed | Result::Committed)) {
+		cout << "Installed and committed." << endl;
+	} else if (ResultContains(result.result, Result::Installed)) {
+		cout << "Installed, but not committed." << endl;
+		cout << "Use 'commit' to update, or 'rollback' to roll back the update." << endl;
+	} else if (ResultContains(result.result, Result::Committed)) {
+		cout << "Committed." << endl;
+	} else {
+		log::Error("Unexpected result value: 0x" + (stringstream() << std::hex << result.result).str());
+	}
+
+	if (ResultContains(result.result, Result::RebootRequired)) {
+		cout << "At least one payload requested a reboot of the device it updated." << endl;
 		if (result.err == error::NoError) {
 			result.err = context::MakeError(context::RebootRequiredError, "Reboot required");
 		}
-		break;
-	default:
-		// All other states, make sure they have an error.
-		if (result.err != error::NoError) {
-			log::Error(result.err.String());
-		} else {
-			result.err = error::MakeError(error::ExitWithFailureError, "");
-		}
-		break;
-	}
-
-	switch (result.result) {
-	case standalone::Result::Downloaded:
-		cout << "Streamed to storage, but not installed/enabled." << endl;
-		break;
-	case standalone::Result::InstalledAndCommitted:
-	case standalone::Result::InstalledAndCommittedRebootRequired:
-		cout << "Installed and committed." << endl;
-		break;
-	case standalone::Result::Committed:
-		cout << "Committed." << endl;
-		break;
-	case standalone::Result::Installed:
-	case standalone::Result::InstalledRebootRequired:
-		cout << "Installed, but not committed." << endl;
-		cout << "Use 'commit' to update, or 'rollback' to roll back the update." << endl;
-		break;
-	case standalone::Result::InstalledButFailedInPostCommit:
-		cout << "Installed, but one or more post-commit steps failed." << endl;
-		break;
-	case standalone::Result::NoUpdateInProgress:
-		cout << "No update in progress." << endl;
-		break;
-	case standalone::Result::FailedNothingDone:
-		cout << "Installation failed. System not modified." << endl;
-		break;
-	case standalone::Result::RolledBack:
-		cout << "Rolled back." << endl;
-		break;
-	case standalone::Result::NoRollback:
-		cout << "Update Module does not support rollback." << endl;
-		break;
-	case standalone::Result::RollbackFailed:
-		cout << "Rollback failed. System may be in an inconsistent state." << endl;
-		break;
-	case standalone::Result::FailedAndRolledBack:
-		cout << "Installation failed. Rolled back modifications." << endl;
-		break;
-	case standalone::Result::FailedAndNoRollback:
-		cout
-			<< "Installation failed, and Update Module does not support rollback. System may be in an inconsistent state."
-			<< endl;
-		break;
-	case standalone::Result::FailedAndRollbackFailed:
-		cout
-			<< "Installation failed, and rollback also failed. System may be in an inconsistent state."
-			<< endl;
-		break;
-	}
-
-	switch (result.result) {
-	case standalone::Result::InstalledRebootRequired:
-	case standalone::Result::InstalledAndCommittedRebootRequired:
-		cout << "At least one payload requested a reboot of the device it updated." << endl;
-		break;
-	default:
-		break;
 	}
 
 	return result.err;

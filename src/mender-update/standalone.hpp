@@ -76,6 +76,8 @@ private:
 	// Will point to one of the states below.
 	StateType *start_state_;
 
+	PrepareDownloadState prepare_download_state_;
+
 	ScriptRunnerState download_enter_state_;
 	DownloadState download_state_;
 	ScriptRunnerState download_leave_state_;

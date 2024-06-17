@@ -245,76 +245,80 @@ StateMachine::StateMachine(Context &ctx) :
 	artifact_failure_enter_state_ {executor::State::ArtifactFailure, executor::Action::Enter, executor::OnError::Ignore, Result::Failed | Result::RollbackFailed},
 	artifact_failure_leave_state_ {executor::State::ArtifactFailure, executor::Action::Leave, executor::OnError::Ignore, Result::NoResult},
 	exit_state_ {loop_},
-	state_machine_ {download_enter_state_} {
+	state_machine_ {prepare_download_state_} {
 	using tf = common::state_machine::TransitionFlag;
 	using se = StateEvent;
 	auto &s = state_machine_;
 
 	// clang-format off
-	s.AddTransition(download_enter_state_,            se::Success,          download_state_,                  tf::Immediate);
-	s.AddTransition(download_enter_state_,            se::Failure,          download_error_state_,            tf::Immediate);
+	s.AddTransition(prepare_download_state_,          se::Success,              download_enter_state_,            tf::Immediate);
+	s.AddTransition(prepare_download_state_,          se::Failure,              exit_state_,                      tf::Immediate);
+	s.AddTransition(prepare_download_state_,          se::EmptyPayloadArtifact, exit_state_,                      tf::Immediate);
 
-	s.AddTransition(download_state_,                  se::Success,          download_leave_state_,            tf::Immediate);
-	s.AddTransition(download_state_,                  se::Failure,          download_error_state_,            tf::Immediate);
+	s.AddTransition(download_enter_state_,            se::Success,              download_state_,                  tf::Immediate);
+	s.AddTransition(download_enter_state_,            se::Failure,              download_error_state_,            tf::Immediate);
 
-	s.AddTransition(download_leave_state_,            se::Success,          artifact_install_enter_state_,    tf::Immediate);
-	s.AddTransition(download_leave_state_,            se::Failure,          download_error_state_,            tf::Immediate);
+	s.AddTransition(download_state_,                  se::Success,              download_leave_state_,            tf::Immediate);
+	s.AddTransition(download_state_,                  se::Failure,              download_error_state_,            tf::Immediate);
 
-	s.AddTransition(download_error_state_,            se::Success,          cleanup_state_,                   tf::Immediate);
-	s.AddTransition(download_error_state_,            se::Failure,          cleanup_state_,                   tf::Immediate);
+	s.AddTransition(download_leave_state_,            se::Success,              artifact_install_enter_state_,    tf::Immediate);
+	s.AddTransition(download_leave_state_,            se::Failure,              download_error_state_,            tf::Immediate);
 
-	s.AddTransition(artifact_install_enter_state_,    se::Success,          artifact_install_state_,          tf::Immediate);
-	s.AddTransition(artifact_install_enter_state_,    se::Failure,          artifact_install_error_state_,    tf::Immediate);
+	s.AddTransition(download_error_state_,            se::Success,              cleanup_state_,                   tf::Immediate);
+	s.AddTransition(download_error_state_,            se::Failure,              cleanup_state_,                   tf::Immediate);
 
-	s.AddTransition(artifact_install_state_,          se::Success,          artifact_install_leave_state_,    tf::Immediate);
-	s.AddTransition(artifact_install_state_,          se::Failure,          artifact_install_error_state_,    tf::Immediate);
+	s.AddTransition(artifact_install_enter_state_,    se::Success,              artifact_install_state_,          tf::Immediate);
+	s.AddTransition(artifact_install_enter_state_,    se::Failure,              artifact_install_error_state_,    tf::Immediate);
 
-	s.AddTransition(artifact_install_leave_state_,    se::Success,          reboot_and_rollback_query_state_, tf::Immediate);
-	s.AddTransition(artifact_install_leave_state_,    se::Failure,          artifact_install_error_state_,    tf::Immediate);
+	s.AddTransition(artifact_install_state_,          se::Success,              artifact_install_leave_state_,    tf::Immediate);
+	s.AddTransition(artifact_install_state_,          se::Failure,              artifact_install_error_state_,    tf::Immediate);
 
-	s.AddTransition(artifact_install_error_state_,    se::Success,          rollback_query_state_,            tf::Immediate);
-	s.AddTransition(artifact_install_error_state_,    se::Failure,          rollback_query_state_,            tf::Immediate);
+	s.AddTransition(artifact_install_leave_state_,    se::Success,              reboot_and_rollback_query_state_, tf::Immediate);
+	s.AddTransition(artifact_install_leave_state_,    se::Failure,              artifact_install_error_state_,    tf::Immediate);
 
-	s.AddTransition(reboot_and_rollback_query_state_, se::Success,          artifact_commit_enter_state_,     tf::Immediate);
-	s.AddTransition(reboot_and_rollback_query_state_, se::Failure,          rollback_query_state_,            tf::Immediate);
-	s.AddTransition(reboot_and_rollback_query_state_, se::NeedsInteraction, exit_state_,                      tf::Immediate);
+	s.AddTransition(artifact_install_error_state_,    se::Success,              rollback_query_state_,            tf::Immediate);
+	s.AddTransition(artifact_install_error_state_,    se::Failure,              rollback_query_state_,            tf::Immediate);
 
-	s.AddTransition(artifact_commit_enter_state_,     se::Success,          artifact_commit_state_,           tf::Immediate);
-	s.AddTransition(artifact_commit_enter_state_,     se::Failure,          artifact_commit_error_state_,     tf::Immediate);
+	s.AddTransition(reboot_and_rollback_query_state_, se::Success,              artifact_commit_enter_state_,     tf::Immediate);
+	s.AddTransition(reboot_and_rollback_query_state_, se::Failure,              rollback_query_state_,            tf::Immediate);
+	s.AddTransition(reboot_and_rollback_query_state_, se::NeedsInteraction,     exit_state_,                      tf::Immediate);
 
-	s.AddTransition(artifact_commit_state_,           se::Success,          artifact_commit_leave_state_,     tf::Immediate);
-	s.AddTransition(artifact_commit_state_,           se::Failure,          artifact_commit_error_state_,     tf::Immediate);
+	s.AddTransition(artifact_commit_enter_state_,     se::Success,              artifact_commit_state_,           tf::Immediate);
+	s.AddTransition(artifact_commit_enter_state_,     se::Failure,              artifact_commit_error_state_,     tf::Immediate);
 
-	s.AddTransition(artifact_commit_leave_state_,     se::Success,          cleanup_state_,                   tf::Immediate);
-	s.AddTransition(artifact_commit_leave_state_,     se::Failure,          cleanup_state_,                   tf::Immediate);
+	s.AddTransition(artifact_commit_state_,           se::Success,              artifact_commit_leave_state_,     tf::Immediate);
+	s.AddTransition(artifact_commit_state_,           se::Failure,              artifact_commit_error_state_,     tf::Immediate);
 
-	s.AddTransition(rollback_query_state_,            se::Success,          artifact_rollback_enter_state_,   tf::Immediate);
-	s.AddTransition(rollback_query_state_,            se::NothingToDo,      artifact_failure_enter_state_,    tf::Immediate);
-	s.AddTransition(rollback_query_state_,            se::Failure,          artifact_failure_enter_state_,    tf::Immediate);
+	s.AddTransition(artifact_commit_leave_state_,     se::Success,              cleanup_state_,                   tf::Immediate);
+	s.AddTransition(artifact_commit_leave_state_,     se::Failure,              cleanup_state_,                   tf::Immediate);
 
-	s.AddTransition(artifact_commit_error_state_,     se::Success,          rollback_query_state_,            tf::Immediate);
-	s.AddTransition(artifact_commit_error_state_,     se::Failure,          rollback_query_state_,            tf::Immediate);
+	s.AddTransition(rollback_query_state_,            se::Success,              artifact_rollback_enter_state_,   tf::Immediate);
+	s.AddTransition(rollback_query_state_,            se::NothingToDo,          artifact_failure_enter_state_,    tf::Immediate);
+	s.AddTransition(rollback_query_state_,            se::Failure,              artifact_failure_enter_state_,    tf::Immediate);
 
-	s.AddTransition(artifact_rollback_enter_state_,   se::Success,          artifact_rollback_state_,         tf::Immediate);
-	s.AddTransition(artifact_rollback_enter_state_,   se::Failure,          artifact_rollback_state_,         tf::Immediate);
+	s.AddTransition(artifact_commit_error_state_,     se::Success,              rollback_query_state_,            tf::Immediate);
+	s.AddTransition(artifact_commit_error_state_,     se::Failure,              rollback_query_state_,            tf::Immediate);
 
-	s.AddTransition(artifact_rollback_state_,         se::Success,          artifact_rollback_leave_state_,   tf::Immediate);
-	s.AddTransition(artifact_rollback_state_,         se::Failure,          artifact_rollback_leave_state_,   tf::Immediate);
+	s.AddTransition(artifact_rollback_enter_state_,   se::Success,              artifact_rollback_state_,         tf::Immediate);
+	s.AddTransition(artifact_rollback_enter_state_,   se::Failure,              artifact_rollback_state_,         tf::Immediate);
 
-	s.AddTransition(artifact_rollback_leave_state_,   se::Success,          artifact_failure_enter_state_,    tf::Immediate);
-	s.AddTransition(artifact_rollback_leave_state_,   se::Failure,          artifact_failure_enter_state_,    tf::Immediate);
+	s.AddTransition(artifact_rollback_state_,         se::Success,              artifact_rollback_leave_state_,   tf::Immediate);
+	s.AddTransition(artifact_rollback_state_,         se::Failure,              artifact_rollback_leave_state_,   tf::Immediate);
 
-	s.AddTransition(artifact_failure_enter_state_,    se::Success,          artifact_failure_state_,          tf::Immediate);
-	s.AddTransition(artifact_failure_enter_state_,    se::Failure,          artifact_failure_state_,          tf::Immediate);
+	s.AddTransition(artifact_rollback_leave_state_,   se::Success,              artifact_failure_enter_state_,    tf::Immediate);
+	s.AddTransition(artifact_rollback_leave_state_,   se::Failure,              artifact_failure_enter_state_,    tf::Immediate);
 
-	s.AddTransition(artifact_failure_state_,          se::Success,          artifact_failure_leave_state_,    tf::Immediate);
-	s.AddTransition(artifact_failure_state_,          se::Failure,          artifact_failure_leave_state_,    tf::Immediate);
+	s.AddTransition(artifact_failure_enter_state_,    se::Success,              artifact_failure_state_,          tf::Immediate);
+	s.AddTransition(artifact_failure_enter_state_,    se::Failure,              artifact_failure_state_,          tf::Immediate);
 
-	s.AddTransition(artifact_failure_leave_state_,    se::Success,          cleanup_state_,                   tf::Immediate);
-	s.AddTransition(artifact_failure_leave_state_,    se::Failure,          cleanup_state_,                   tf::Immediate);
+	s.AddTransition(artifact_failure_state_,          se::Success,              artifact_failure_leave_state_,    tf::Immediate);
+	s.AddTransition(artifact_failure_state_,          se::Failure,              artifact_failure_leave_state_,    tf::Immediate);
 
-	s.AddTransition(cleanup_state_,                   se::Success,          exit_state_,                      tf::Immediate);
-	s.AddTransition(cleanup_state_,                   se::Failure,          exit_state_,                      tf::Immediate);
+	s.AddTransition(artifact_failure_leave_state_,    se::Success,              cleanup_state_,                   tf::Immediate);
+	s.AddTransition(artifact_failure_leave_state_,    se::Failure,              cleanup_state_,                   tf::Immediate);
+
+	s.AddTransition(cleanup_state_,                   se::Success,              exit_state_,                      tf::Immediate);
+	s.AddTransition(cleanup_state_,                   se::Failure,              exit_state_,                      tf::Immediate);
 	// clang-format on
 }
 

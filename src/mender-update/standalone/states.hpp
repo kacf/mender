@@ -41,6 +41,11 @@ private:
 	string state_;
 };
 
+class PrepareDownloadState : virtual public StateType {
+public:
+	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+};
+
 class DownloadState : virtual public StateType {
 public:
 	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;

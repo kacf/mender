@@ -47,23 +47,19 @@ static void UpdateResult(ResultAndError &result, const ResultAndError &update) {
 	result.result = result.result | update.result;
 }
 
-ResultAndError DoEmptyPayloadArtifact(
-	Context &context, StateData &data, InstallOptions options) {
-	if (options != InstallOptions::NoStdout) {
+error::Error DoEmptyPayloadArtifact(Context &ctx) {
+	if (ctx.options != InstallOptions::NoStdout) {
 		cout << "Installing artifact..." << endl;
 		cout << "Artifact with empty payload. Committing immediately." << endl;
 	}
 
-	auto err = context.main_context.CommitArtifactData(
+	auto &data = ctx.state_data;
+	return ctx.main_context.CommitArtifactData(
 		data.artifact_name,
 		data.artifact_group,
 		data.artifact_provides,
 		data.artifact_clears_provides,
 		[](database::Transaction &txn) { return error::NoError; });
-	if (err != error::NoError) {
-		return {Result::Failed | Result::FailedInPostCommit, err};
-	}
-	return {Result::Downloaded | Result::Installed | Result::Committed, err};
 }
 
 static io::ExpectedReaderPtr ReaderFromUrl(
@@ -125,11 +121,9 @@ static io::ExpectedReaderPtr ReaderFromUrl(
 	return make_shared<events::io::ReaderFromAsyncReader>(loop, reader);
 }
 
-error::Error DoDownloadState(
-	Context &ctx,
-	artifact::Artifact &artifact) {
+error::Error DoDownloadState(Context &ctx) {
 
-	auto payload = artifact.Next();
+	auto payload = ctx.parser->Next();
 	if (!payload) {
 		return payload.error();
 	}
@@ -151,7 +145,7 @@ error::Error DoDownloadState(
 		return err;
 	}
 
-	payload = artifact.Next();
+	payload = ctx.parser->Next();
 	if (payload) {
 		err = error::Error(
 			make_error_condition(errc::not_supported),
@@ -169,6 +163,8 @@ error::Error DoDownloadState(
 }
 
 // TODO Go through all UpdateResult and make sure they have right parameters.
+// TODO Check that all returns and functions ends have events.
+// TODO Check that all return paths have UpdateResults at all, including function ends (by every postevent)
 
 StateData StateDataFromPayloadHeaderView(const artifact::PayloadHeaderView &header) {
 	StateData dst;
@@ -182,7 +178,7 @@ StateData StateDataFromPayloadHeaderView(const artifact::PayloadHeaderView &head
 	return dst;
 }
 
-void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
+void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 	io::ReaderPtr artifact_reader;
 
 	shared_ptr<events::EventLoop> event_loop;
@@ -239,9 +235,9 @@ void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
-	auto &parser = exp_parser.value();
+	ctx.parser = make_unique<artifact::Artifact>(std::move(exp_parser.value()));
 
-	auto exp_header = artifact::View(parser, 0);
+	auto exp_header = artifact::View(*ctx.parser, 0);
 	if (!exp_header) {
 		UpdateResult(ctx.result_and_error, {Result::Failed, exp_header.error()});
 		poster.PostEvent(StateEvent::Failure);
@@ -250,9 +246,14 @@ void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 	auto &header = exp_header.value();
 
 	if (header.header.payload_type == "") {
-		auto data = StateDataFromPayloadHeaderView(header);
-		// TODO
-		return DoEmptyPayloadArtifact(main_context, data, options);
+		ctx.state_data = StateDataFromPayloadHeaderView(header);
+		err = DoEmptyPayloadArtifact(ctx);
+		if (err != error::NoError) {
+			UpdateResult(ctx.result_and_error, {Result::Failed | Result::FailedInPostCommit, err});
+			poster.PostEvent(StateEvent::Failure);
+			return;
+		}
+		UpdateResult(ctx.result_and_error, {Result::Downloaded | Result::Installed | Result::Committed, error::NoError});
 		poster.PostEvent(StateEvent::EmptyPayloadArtifact);
 		return;
 	}
@@ -280,28 +281,18 @@ void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 		return;
 	}
 
-	auto err = DoDownloadState(main_context, data, parser, ctx.update_module);
+	poster.PostEvent(StateEvent::Success);
+}
+
+void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
+	auto err = DoDownloadState(ctx);
 	if (err != error::NoError) {
+		log::Error("Streaming failed: " + err.String());
 		UpdateResult(ctx.result_and_error, {Result::Failed, err});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
 
-	data.completed_state = CompletedStates::download;
-	err = SaveStateData(main_context.GetMenderStoreDB(), data);
-	if (err != error::NoError) {
-		// Yes, we downloaded, but remember that the Download state is not supposed to have
-		// any system-visible effects.
-		UpdateResult(ctx.result_and_error, {Result::Failed, err});
-		poster.PostEvent(StateEvent::Failure);
-		return;
-	}
-
-	if (options != InstallOptions::NoStdout) {
-		cout << "Installing artifact..." << endl;
-	}
-
-	ctx.result_and_error = result;
 	poster.PostEvent(StateEvent::Success);
 }
 
@@ -310,15 +301,14 @@ void ArtifactInstallState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 		cout << "Installing artifact..." << endl;
 	}
 
-	auto err = ctx.update_module.ArtifactInstall();
+	auto err = ctx.update_module->ArtifactInstall();
 	if (err != error::NoError) {
-		log::Error("Installation failed: " + err.FollowedBy(install_leave_error).String());
-		UpdateResult(ctx.result_and_error, {Result::FailedNoRollbackAttempted, err});
+		log::Error("Installation failed: " + err.String());
+		UpdateResult(ctx.result_and_error, {Result::Failed, err});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
 
-	UpdateResult(ctx.result_and_error, {Result::Installed, error::NoError});
 	poster.PostEvent(StateEvent::Success);
 }
 
@@ -326,7 +316,7 @@ void RebootAndRollbackQueryState::OnEnter(Context &ctx, sm::EventPoster<StateEve
 	auto reboot = ctx.update_module->NeedsReboot();
 	if (!reboot) {
 		log::Error("Could not query for reboot: " + reboot.error().String());
-		UpdateResult(ctx.result_and_error, {Result::FailedNoRollbackAttempted, reboot.error()});
+		UpdateResult(ctx.result_and_error, {Result::Failed, reboot.error()});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
@@ -334,16 +324,14 @@ void RebootAndRollbackQueryState::OnEnter(Context &ctx, sm::EventPoster<StateEve
 	auto rollback_support = ctx.update_module->SupportsRollback();
 	if (!rollback_support) {
 		log::Error("Could not query for rollback support: " + rollback_support.error().String());
-		UpdateResult(ctx.result_and_error, {Result::FailedNoRollbackAttempted, rollback_support.error()});
+		UpdateResult(ctx.result_and_error, {Result::Failed, rollback_support.error()});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
 
 	if (rollback_support.value()) {
-		if (reboot.value() != ctx.update_module::RebootAction::No) {
-			UpdateResult(ctx.result_and_error, {Result::InstalledRebootRequired, error::NoError});
-		} else {
-			UpdateResult(ctx.result_and_error, {Result::Installed, error::NoError});
+		if (reboot.value() != update_module::RebootAction::No) {
+			UpdateResult(ctx.result_and_error, {Result::RebootRequired, error::NoError});
 		}
 		poster.PostEvent(StateEvent::NeedsInteraction);
 		return;
@@ -354,10 +342,10 @@ void RebootAndRollbackQueryState::OnEnter(Context &ctx, sm::EventPoster<StateEve
 }
 
 void ArtifactCommitState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
-	err = ctx.update_module->ArtifactCommit();
+	auto err = ctx.update_module->ArtifactCommit();
 	if (err != error::NoError) {
 		log::Error("Commit failed: " + err.String());
-		UpdateResult(ctx.result_and_error, {Result::FailedNoRollbackAttempted, err});
+		UpdateResult(ctx.result_and_error, {Result::Failed, err});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
@@ -370,13 +358,13 @@ void RollbackQueryState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &post
 	auto rollback_support = ctx.update_module->SupportsRollback();
 	if (!rollback_support) {
 		log::Error("Could not query for rollback support: " + rollback_support.error().String());
-		UpdateResult(ctx.result_and_error, {Result::FailedAndRollbackFailed, rollback_support.error()});
+		UpdateResult(ctx.result_and_error, {Result::RollbackFailed, rollback_support.error()});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
 
 	if (not rollback_support.value()) {
-		UpdateResult(ctx.result_and_error, {Result::FailedAndNoRollback, error::NoError});
+		UpdateResult(ctx.result_and_error, {Result::NoRollback, error::NoError});
 		poster.PostEvent(StateEvent::NothingToDo);
 		return;
 	}
@@ -385,7 +373,7 @@ void RollbackQueryState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &post
 }
 
 void ArtifactRollbackState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
-	err = ctx.update_module->ArtifactRollback();
+	auto err = ctx.update_module->ArtifactRollback();
 	if (err != error::NoError) {
 		UpdateResult(ctx.result_and_error, {Result::RollbackFailed, err});
 		poster.PostEvent(StateEvent::Failure);
@@ -397,7 +385,7 @@ void ArtifactRollbackState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &p
 }
 
 void ArtifactFailureState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
-	err = ctx.update_module->ArtifactFailure();
+	auto err = ctx.update_module->ArtifactFailure();
 	if (err != error::NoError) {
 		UpdateResult(ctx.result_and_error, {Result::RollbackFailed, err});
 		poster.PostEvent(StateEvent::Failure);
@@ -410,7 +398,7 @@ void ArtifactFailureState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 void CleanupState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 	// If this is null, then it is simply a no-op, the update did not even get started.
 	if (ctx.update_module != nullptr) {
-		err = ctx.update_module->Cleanup();
+		auto err = ctx.update_module->Cleanup();
 		if (err != error::NoError) {
 			UpdateResult(ctx.result_and_error, {Result::RollbackFailed, err});
 			poster.PostEvent(StateEvent::Failure);
@@ -423,6 +411,7 @@ void CleanupState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 	error::Error err;
 	if (data.rolled_back) {
 		// Successful rollback.
+		auto &db = ctx.main_context.GetMenderStoreDB();
 		err = db.Remove(context::MenderContext::standalone_state_key);
 	} else {
 		if (data.failed) {
@@ -434,7 +423,7 @@ void CleanupState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 			// Fall through to success case.
 		}
 		// Commit artifact data and remove state data
-		err = main_context.CommitArtifactData(
+		err = ctx.main_context.CommitArtifactData(
 			data.artifact_name,
 			data.artifact_group,
 			data.artifact_provides,
@@ -454,7 +443,7 @@ void CleanupState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 }
 
 void ScriptRunnerState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
-	auto err = script_runner.RunScripts(state_, action_, on_error_);
+	auto err = ctx.script_runner->RunScripts(state_, action_, on_error_);
 	if (err != error::NoError) {
 		log::Error("Error executing script: " + err.String());
 		UpdateResult(ctx.result_and_error, {result_on_error_, err});

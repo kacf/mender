@@ -137,6 +137,7 @@ struct Context {
 	unique_ptr<update_module::UpdateModule> update_module;
 	unique_ptr<executor::ScriptRunner> script_runner;
 
+	unique_ptr<artifact::Artifact> parser;
 	artifact::config::Signature verify_signature;
 	InstallOptions options;
 

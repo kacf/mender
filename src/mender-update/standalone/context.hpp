@@ -46,14 +46,24 @@ struct StateDataKeys {
 	static const string payload_types;
 
 	// Introduced in version 2, not valid in version 1.
-	//
-	// Can theoretically contain any state, similar to how daemon mode works (although it uses
-	// different names), but in practice only Download and ArtifactInstall are handled, and
-	// exposed in CLI, at the time of writing.
-
-	// TODO: Make constants for this
 	static const string completed_state;
+	static const string failed;
+	static const string rolled_back;
 };
+
+struct CompletedStates {
+	// We use the "leave" form just in case we make this more granular later.
+	static const string download_leave;
+	static const string artifact_install_leave;
+
+	// This state has two forms because the leave script needs to be rerun if interrupted.
+	static const string artifact_commit;
+	static const string artifact_commit_leave;
+
+	static const string artifact_rollback_leave;
+	static const string artifact_failure_leave;
+};
+
 struct StateData {
 	int version;
 	string artifact_name;
@@ -61,7 +71,10 @@ struct StateData {
 	optional<unordered_map<string, string>> artifact_provides;
 	optional<vector<string>> artifact_clears_provides;
 	vector<string> payload_types;
+
 	string completed_state;
+	bool failed {false};
+	bool rolled_back {false};
 };
 using ExpectedOptionalStateData = expected::expected<optional<StateData>, error::Error>;
 

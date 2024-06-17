@@ -61,9 +61,20 @@ error::Error RemoveStateData(database::KeyValueDatabase &db);
 
 class StateMachine {
 public:
-	StateMachine();
+	StateMachine(Context &ctx) :
+		context_ {ctx} {
+	}
+
+	error::Error SetStartStateFromLastCompleted(const string &completed_state);
+
+	void Run();
 
 private:
+	Context &context_;
+
+	// Will point to one of the states below.
+	State *start_state_;
+
 	common::state_machine::StateMachine state_machine_;
 
 	ScriptRunnerState download_enter_state_;

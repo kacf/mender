@@ -43,6 +43,17 @@ public:
 	virtual bool IsFailureState() const = 0;
 };
 
+class StateDataSaveState : virtual public StateType {
+public:
+	StateDataSaveState(const string &state) :
+		state_ {state} {
+	}
+	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;
+
+private:
+	string state_;
+};
+
 class DownloadState : virtual public StateType {
 public:
 	void OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) override;

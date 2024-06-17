@@ -110,7 +110,9 @@ ExpectedOptionalStateData LoadStateData(database::KeyValueDatabase &db) {
 
 	if (dst.version == 1) {
 		// In version 1, if there is any data at all, it is equivalent to this:
-		dst.completed_state = "ArtifactInstall";
+		dst.completed_state = CompletedStates::artifact_install_leave;
+		dst.failed = false;
+		dst.rolled_back = false;
 
 		// Additionally, there is never any situation where we want to save version 1 data,
 		// because it only has one state: The one we just loaded in the previous
@@ -125,6 +127,18 @@ ExpectedOptionalStateData LoadStateData(database::KeyValueDatabase &db) {
 			return expected::unexpected(exp_string.error());
 		}
 		dst.completed_state = exp_string.value();
+
+		auto exp_bool = json::Get<bool>(json, keys.failed, json::MissingOk::No);
+		if (!exp_bool) {
+			return expected::unexpected(exp_bool.error());
+		}
+		dst.failed = exp_bool.value();
+
+		exp_bool = json::Get<bool>(json, keys.rolled_back, json::MissingOk::No);
+		if (!exp_bool) {
+			return expected::unexpected(exp_bool.error());
+		}
+		dst.rolled_back = exp_bool.value();
 	}
 
 	if (dst.artifact_name == "") {
@@ -209,7 +223,11 @@ error::Error SaveStateData(database::KeyValueDatabase &db, const StateData &data
 		ss << "]";
 	}
 
-	ss << R"(,"CompletedState":")" << data.completed_state << R"(")";
+	ss << R"(,")" << keys.completed_state << R"(":")" << data.completed_state << R"(")";
+
+	ss << R"(,")" << keys.failed << R"(":)" << (data.failed ? "true" : "false");
+
+	ss << R"(,")" << keys.rolled_back << R"(":)" << (data.rolled_back ? "true" : "false");
 
 	ss << "}";
 
@@ -224,7 +242,7 @@ error::Error RemoveStateData(database::KeyValueDatabase &db) {
 }
 
 StateMachine::StateMachine() :
-	state_machine_ {start_state_},
+	state_machine_ {download_enter_state_},
 	download_enter_state_ {Executor::State::Download, executor::Action::Enter, executor::OnError::Fail, Result::FailedNothingDone},
 	download_leave_state_ {Executor::State::Download, executor::Action::Leave, executor::OnError::Fail, Result::FailedNothingDone},
 	download_error_state_ {Executor::State::Download, executor::Action::Error, executor::OnError::Ignore, Result::NoResult},
@@ -280,6 +298,10 @@ StateMachine::StateMachine() :
 	s.AddTransition(artifact_commit_leave_state_,     se::Success,          cleanup_state_,                   sm::Immediate);
 	s.AddTransition(artifact_commit_leave_state_,     se::Failure,          cleanup_state_,                   sm::Immediate);
 
+	s.AddTransition(rollback_query_state_,            se::Success,          artifact_rollback_enter_state_,   sm::Immediate);
+	s.AddTransition(rollback_query_state_,            se::NothingToDo,      artifact_failure_enter_state_,    sm::Immediate);
+	s.AddTransition(rollback_query_state_,            se::Failure,          artifact_failure_enter_state_,    sm::Immediate);
+
 	s.AddTransition(artifact_commit_error_state_,     se::Success,          rollback_query_state_,            sm::Immediate);
 	s.AddTransition(artifact_commit_error_state_,     se::Failure,          rollback_query_state_,            sm::Immediate);
 
@@ -289,8 +311,8 @@ StateMachine::StateMachine() :
 	s.AddTransition(artifact_rollback_state_,         se::Success,          artifact_rollback_leave_state_,   sm::Immediate);
 	s.AddTransition(artifact_rollback_state_,         se::Failure,          artifact_rollback_leave_state_,   sm::Immediate);
 
-	s.AddTransition(artifact_rollback_leave_state_,   se::Success,          artifact_failure_state_,          sm::Immediate);
-	s.AddTransition(artifact_rollback_leave_state_,   se::Failure,          artifact_failure_error_state_,    sm::Immediate);
+	s.AddTransition(artifact_rollback_leave_state_,   se::Success,          artifact_failure_enter_state_,    sm::Immediate);
+	s.AddTransition(artifact_rollback_leave_state_,   se::Failure,          artifact_failure_enter_state_,    sm::Immediate);
 
 	s.AddTransition(artifact_failure_enter_state_,    se::Success,          artifact_failure_state_,          sm::Immediate);
 	s.AddTransition(artifact_failure_enter_state_,    se::Failure,          artifact_failure_state_,          sm::Immediate);
@@ -306,63 +328,58 @@ StateMachine::StateMachine() :
 	// clang-format on
 }
 
-static io::ExpectedReaderPtr ReaderFromUrl(
-	events::EventLoop &loop, http::Client &http_client, const string &src) {
-	auto req = make_shared<http::OutgoingRequest>();
-	req->SetMethod(http::Method::GET);
-	auto err = req->SetAddress(src);
-	if (err != error::NoError) {
-		return expected::unexpected(err);
-	}
-	error::Error inner_err;
-	io::AsyncReaderPtr reader;
-	err = http_client.AsyncCall(
-		req,
-		[&loop, &inner_err, &reader](http::ExpectedIncomingResponsePtr exp_resp) {
-			// No matter what happens, we will want to stop the loop after the headers
-			// are received.
-			loop.Stop();
+void StateMachine::Run() {
+	events::EventLoop loop;
+	common::state_machine::StateMachineRunner<Context, StateEvent> runner {context_};
+	runner.AddStateMachine(state_machine_);
+	runner.AttachToEventLoop(loop);
 
-			if (!exp_resp) {
-				inner_err = exp_resp.error();
-				return;
-			}
-
-			auto resp = exp_resp.value();
-
-			if (resp->GetStatusCode() != http::StatusOK) {
-				inner_err = context::MakeError(
-					context::UnexpectedHttpResponse,
-					to_string(resp->GetStatusCode()) + ": " + resp->GetStatusMessage());
-				return;
-			}
-
-			auto exp_reader = resp->MakeBodyAsyncReader();
-			if (!exp_reader) {
-				inner_err = exp_reader.error();
-				return;
-			}
-			reader = exp_reader.value();
-		},
-		[](http::ExpectedIncomingResponsePtr exp_resp) {
-			if (!exp_resp) {
-				log::Warning("While reading HTTP body: " + exp_resp.error().String());
-			}
-		});
-
-	// Loop until the headers are received. Then we return and let the reader drive the
-	// rest of the download.
 	loop.Run();
+}
 
-	if (err != error::NoError) {
-		return expected::unexpected(err);
+error::Error StateMachine::SetStartStateFromLastCompleted(const string &completed_state) {
+	if (completed_state == CompletedStates::download_leave) {
+		start_state_ = &artifact_install_enter_state_;
+	} else if (completed_state == CompletedStates::artifact_install_leave) {
+		start_state_ = &artifact_commit_enter_state_;
+	} else if (completed_state == CompletedStates::artifact_commit) {
+		start_state_ = &artifact_commit_leave_state_;
+	} else if (completed_state == CompletedStates::artifact_commit_leave) {
+		start_state_ = &cleanup_state_;
+	} else if (completed_state == CompletedStates::artifact_rollback_leave) {
+		start_state_ = &artifact_failure_enter_state_;
+	} else if (completed_state == CompletedStates::artifact_failure_leave) {
+		start_state_ = &cleanup_state_;
+	} else {
+		return context::MakeError(context::DatabaseValueError, "Invalid CompletedState in database " + completed_state);
 	}
 
-	if (inner_err != error::NoError) {
-		return expected::unexpected(inner_err);
-	}
+	return error::NoError;
+}
 
-	return make_shared<events::io::ReaderFromAsyncReader>(loop, reader);
+error::Error PrepareContext(Context &ctx) {
+	const auto &default_paths {main_context.GetConfig().paths};
+	ctx.script_runner = make_unique<executor::ScriptRunner>(
+		ctx.loop,
+		chrono::seconds {main_context.GetConfig().state_script_timeout_seconds},
+		chrono::seconds {main_context.GetConfig().state_script_retry_interval_seconds},
+		chrono::seconds {main_context.GetConfig().state_script_retry_timeout_seconds},
+		default_paths.GetArtScriptsPath(),
+		default_paths.GetRootfsScriptsPath());
+
+	return error::NoError;
+}
+
+error::Error PrepateUpdateModuleFromStateData(Context &ctx, const StateData &data) {
+	ctx.update_module = make_unique<update_module::UpdateModule>(ctx.main_context, state_data->payload_types[0]);
+
+	if (state_data->payload_types[0] == "rootfs-image") {
+		// Special case for rootfs-image upgrades. See comments inside the function.
+		auto err = ctx.update_module->EnsureRootfsImageFileTree(ctx.update_module->GetUpdateModuleWorkDir());
+		if (err != error::NoError) {
+			return err;
+		}
+	}
 }
 
 ResultAndError Download(
@@ -384,102 +401,18 @@ ResultAndError Download(
 				"Update already in progress. Please commit or roll back first")};
 	}
 
-	io::ReaderPtr artifact_reader;
-
-	shared_ptr<events::EventLoop> event_loop;
-	http::ClientPtr http_client;
-
-	if (src.find("http://") == 0 || src.find("https://") == 0) {
-		event_loop = make_shared<events::EventLoop>();
-		http_client =
-			make_shared<http::Client>(main_context.GetConfig().GetHttpClientConfig(), *event_loop);
-		auto reader = ReaderFromUrl(*event_loop, *http_client, src);
-		if (!reader) {
-			return {Result::FailedNothingDone, reader.error()};
-		}
-		artifact_reader = reader.value();
-	} else {
-		auto stream = io::OpenIfstream(src);
-		if (!stream) {
-			return {Result::FailedNothingDone, stream.error()};
-		}
-		auto file_stream = make_shared<ifstream>(std::move(stream.value()));
-		artifact_reader = make_shared<io::StreamReader>(file_stream);
-	}
-
-	string art_scripts_path = main_context.GetConfig().paths.GetArtScriptsPath();
-
-	// Clear the artifact scripts directory so we don't risk old scripts lingering.
-	auto err = path::DeleteRecursively(art_scripts_path);
+	auto err = PrepareContext(context, in_progress);
 	if (err != error::NoError) {
-		return {Result::FailedNothingDone, err.WithContext("When preparing to parse artifact")};
-	}
-
-	artifact::config::ParserConfig config {
-		.artifact_scripts_filesystem_path = main_context.GetConfig().paths.GetArtScriptsPath(),
-		.artifact_scripts_version = 3,
-		.artifact_verify_keys = main_context.GetConfig().artifact_verify_keys,
-		.verify_signature = verify_signature,
-	};
-
-	auto exp_parser = artifact::Parse(*artifact_reader, config);
-	if (!exp_parser) {
-		return {Result::FailedNothingDone, exp_parser.error()};
-	}
-	auto &parser = exp_parser.value();
-
-	auto exp_header = artifact::View(parser, 0);
-	if (!exp_header) {
-		return {Result::FailedNothingDone, exp_header.error()};
-	}
-	auto &header = exp_header.value();
-
-	if (header.header.payload_type == "") {
-		auto data = StateDataFromPayloadHeaderView(header);
-		return DoEmptyPayloadArtifact(main_context, data, options);
-	}
-
-	update_module::UpdateModule update_module(main_context, header.header.payload_type);
-
-	err = update_module.CleanAndPrepareFileTree(update_module.GetUpdateModuleWorkDir(), header);
-	if (err != error::NoError) {
-		err = err.FollowedBy(update_module.Cleanup());
 		return {Result::FailedNothingDone, err};
 	}
 
-	StateData data = StateDataFromPayloadHeaderView(header);
+	StateMachine state_machine;
+	state_machine.Run();
 
-	auto exp_matches = main_context.MatchesArtifactDepends(header.header);
-	if (!exp_matches) {
-		log::Error(exp_matches.error().String());
-		return {Result::FailedNothingDone, err};
-	} else if (!exp_matches.value()) {
-		// reasons already logged
-		return {Result::FailedNothingDone, err};
-	}
-
-	auto result = DoDownloadState(main_context, data, parser, update_module);
-	if (result.result != Result::Downloaded) {
-		return result;
-	}
-
-	data.completed_state = "Download";
-	err = SaveStateData(main_context.GetMenderStoreDB(), data);
-	if (err != error::NoError) {
-		err = err.FollowedBy(update_module.Cleanup());
-		// Yes, we downloaded, but remember that the Download state is not supposed to have
-		// any system-visible effects.
-		return {Result::FailedNothingDone, err};
-	}
-
-	if (options != InstallOptions::NoStdout) {
-		cout << "Installing artifact..." << endl;
-	}
-
-	return result;
+	return context.result_and_error;
 }
 
-ResultAndError Install(Context &context) {
+ResultAndError Resume(Context &context) {
 	auto exp_in_progress = LoadStateData(main_context.GetMenderStoreDB());
 	if (!exp_in_progress) {
 		return {Result::FailedNothingDone, exp_in_progress.error()};
@@ -489,59 +422,27 @@ ResultAndError Install(Context &context) {
 	if (!in_progress) {
 		return {
 			Result::NoUpdateInProgress,
-			context::MakeError(context::NoUpdateInProgressError, "Cannot install")};
-	}
-	auto &data = in_progress.value();
-
-	update_module::UpdateModule update_module(main_context, data.payload_types[0]);
-
-	error::Error err;
-	auto result = DoInstallState(main_context, data, update_module);
-	switch (result.result) {
-	case Result::Installed:
-	case Result::InstalledRebootRequired:
-		data.completed_state = "ArtifactInstall";
-		err = SaveStateData(main_context.GetMenderStoreDB(), data);
-		if (err != error::NoError) {
-			return InstallationFailureHandler(main_context, data, update_module);
-		}
-		break;
-	case Result::InstalledAndCommitted:
-	case Result::InstalledAndCommittedRebootRequired:
-	case Result::InstalledButFailedInPostCommit:
-	case Result::FailedNothingDone:
-	case Result::FailedAndRolledBack:
-	case Result::FailedAndNoRollback:
-	case Result::FailedAndRollbackFailed:
-		// All other results do not need to save anything, because we completed in one way
-		// or another. We are spelling out every state though, just to make sure this code
-		// is revisited if anything is added.
-		break;
-	case Result::NoUpdateInProgress:
-	case Result::Downloaded:
-	case Result::Committed:
-	case Result::RolledBack:
-	case Result::NoRollback:
-	case Result::RollbackFailed:
-		// These should not happen from here.
-		assert(false);
-		return {Result::FailedAndRollbackFailed, error::MakeError(error::ProgrammingError, "Should not reach state " + to_string(static_cast<int>(result.result)) + " from here")};
+			context::MakeError(context::NoUpdateInProgressError, "Cannot resume")};
 	}
 
-	return result;
-}
-
-ResultAndError DownloadAndInstall(
-	Context &context,
-	const string &src,
-	const artifact::config::Signature verify_signature,
-	InstallOptions options) {
-	auto result = Download(main_context, src, verify_signature, options);
-	if (result.result != Result::Downloaded) {
-		return result;
+	auto err = PrepareContext(context);
+	if (err != error::NoError) {
+		return {Result::FailedNothingDone, err};
 	}
 
-	return Install(main_context);
+	err = PrepareUpdateModuleFromStateData(context, in_progress);
+	if (err != error::NoError) {
+		return {Result::FailedNothingDone, err};
+	}
+
+	StateMachine state_machine;
+	err = state_machine.SetStartStateFromLastCompleted(ctx.state_data.completed_state);
+	if (err != error::NoError) {
+		return {Result::FailedNothingDone, err};
+	}
+	state_machine.Run();
+
+	return context.result_and_error;
 }
 
 ResultAndError Commit(Context &context) {
@@ -558,24 +459,37 @@ ResultAndError Commit(Context &context) {
 	}
 	auto &data = in_progress.value();
 
-	if (data.completed_state != "ArtifactInstall") {
+	if (data.completed_state != CompletedStates::artifact_install_leave) {
 		return {Result::FailedNothingDone, context::MakeError(context::WrongOperationError,
 			"Cannot commit from this state. "
 			"Make sure that the `install` command has run successfully and the device is expecting a commit.")};
 	}
 
-	update_module::UpdateModule update_module(main_context, data.payload_types[0]);
-
-	if (data.payload_types[0] == "rootfs-image") {
-		// Special case for rootfs-image upgrades. See comments inside the function.
-		auto err = update_module.EnsureRootfsImageFileTree(update_module.GetUpdateModuleWorkDir());
-		if (err != error::NoError) {
-			return {Result::FailedNothingDone, err};
-		}
+	auto err = PrepareContext(context);
+	if (err != error::NoError) {
+		return {Result::FailedNothingDone, err};
 	}
 
-	return DoCommit(main_context, data, update_module);
+	err = PrepareUpdateModuleFromStateData(context, in_progress);
+	if (err != error::NoError) {
+		return {Result::FailedNothingDone, err};
+	}
+
+	StateMachine state_machine;
+	err = state_machine.SetStartStateFromLastCompleted(data.completed_state);
+	if (err != error::NoError) {
+		return {Result::FailedNothingDone, err};
+	}
+	state_machine.Run();
+
+	return context.result_and_error;
 }
+
+// TODO
+// Things to take into account
+//  	if (data.completed_state != "ArtifactInstall") {
+//  	if (data.payload_types[0] == "rootfs-image") {
+// Return without clearing data when rolling back
 
 ResultAndError Rollback(Context &context) {
 	auto exp_in_progress = LoadStateData(main_context.GetMenderStoreDB());
@@ -591,435 +505,30 @@ ResultAndError Rollback(Context &context) {
 	}
 	auto &data = in_progress.value();
 
-	if (data.completed_state != "ArtifactInstall") {
+	if (data.completed_state != CompletedStates::artifact_install_leave) {
 		return {Result::FailedNothingDone, context::MakeError(context::WrongOperationError,
-			"Cannot roll back from this state. "
-			"Make sure that the `install` command has run successfully and the device is ready to roll back.")};
+			"Cannot commit from this state. "
+			"Make sure that the `install` command has run successfully and the device is expecting a commit.")};
 	}
 
-	update_module::UpdateModule update_module(main_context, data.payload_types[0]);
-
-	if (data.payload_types[0] == "rootfs-image") {
-		// Special case for rootfs-image upgrades. See comments inside the function.
-		auto err = update_module.EnsureRootfsImageFileTree(update_module.GetUpdateModuleWorkDir());
-		if (err != error::NoError) {
-			return {Result::FailedNothingDone, err};
-		}
-	}
-
-	auto result = DoRollback(main_context, data, update_module);
-
-	if (result.result == Result::NoRollback) {
-		// No support for rollback. Return instead of clearing update data. It should be
-		// cleared by calling commit or restoring the rollback capability.
-		return result;
-	}
-
-	auto err = update_module.Cleanup();
+	auto err = PrepareContext(context);
 	if (err != error::NoError) {
-		result.result = Result::FailedAndRollbackFailed;
-		result.err = result.err.FollowedBy(err);
-	}
-
-	if (result.result == Result::RolledBack) {
-		err = RemoveStateData(main_context.GetMenderStoreDB());
-	} else {
-		err = CommitBrokenArtifact(main_context, data);
-	}
-	if (err != error::NoError) {
-		result.result = Result::RollbackFailed;
-		result.err = result.err.FollowedBy(err);
-	}
-
-	return result;
-}
-
-ResultAndError DoDownloadState(
-	Context &context,
-	StateData &data,
-	artifact::Artifact &artifact,
-	update_module::UpdateModule &update_module) {
-	auto payload = artifact.Next();
-	if (!payload) {
-		return {Result::FailedNothingDone, payload.error()};
-	}
-
-	const auto &default_paths {main_context.GetConfig().paths};
-	events::EventLoop loop;
-	auto script_runner {executor::ScriptRunner(
-		loop,
-		chrono::seconds {main_context.GetConfig().state_script_timeout_seconds},
-		chrono::seconds {main_context.GetConfig().state_script_retry_interval_seconds},
-		chrono::seconds {main_context.GetConfig().state_script_retry_timeout_seconds},
-		default_paths.GetArtScriptsPath(),
-		default_paths.GetRootfsScriptsPath())};
-
-	// ProvidePayloadFileSizes
-	auto with_sizes = update_module.ProvidePayloadFileSizes();
-	if (!with_sizes) {
-		log::Error("Could not query for provide file sizes: " + with_sizes.error().String());
-		return InstallationFailureHandler(main_context, data, update_module);
-	}
-
-	// Download Enter
-	auto err = script_runner.RunScripts(executor::State::Download, executor::Action::Enter);
-	if (err != error::NoError) {
-		err = err.FollowedBy(
-			script_runner.RunScripts(executor::State::Download, executor::Action::Error));
-		err = err.FollowedBy(update_module.Cleanup());
-		err = err.FollowedBy(RemoveStateData(main_context.GetMenderStoreDB()));
-		return {Result::FailedNothingDone, err};
-	}
-	if (with_sizes.value()) {
-		err = update_module.DownloadWithFileSizes(payload.value());
-	} else {
-		err = update_module.Download(payload.value());
-	}
-	if (err != error::NoError) {
-		err = err.FollowedBy(
-			script_runner.RunScripts(executor::State::Download, executor::Action::Error));
-		err = err.FollowedBy(update_module.Cleanup());
-		err = err.FollowedBy(RemoveStateData(main_context.GetMenderStoreDB()));
 		return {Result::FailedNothingDone, err};
 	}
 
-	payload = artifact.Next();
-	if (payload) {
-		err = error::Error(
-			make_error_condition(errc::not_supported),
-			"Multiple payloads are not supported in standalone mode");
-	} else if (
-		payload.error().code
-		!= artifact::parser_error::MakeError(artifact::parser_error::EOFError, "").code) {
-		err = payload.error();
-	}
+	err = PrepareUpdateModuleFromStateData(context, in_progress);
 	if (err != error::NoError) {
-		err = err.FollowedBy(
-			script_runner.RunScripts(executor::State::Download, executor::Action::Error));
-		err = err.FollowedBy(update_module.Cleanup());
-		err = err.FollowedBy(RemoveStateData(main_context.GetMenderStoreDB()));
 		return {Result::FailedNothingDone, err};
 	}
 
-	// Download Leave
-	err = script_runner.RunScripts(executor::State::Download, executor::Action::Leave);
+	StateMachine state_machine;
+	err = state_machine.SetStartStateFromLastCompleted(data.completed_state);
 	if (err != error::NoError) {
-		err = err.FollowedBy(
-			script_runner.RunScripts(executor::State::Download, executor::Action::Error));
-		err = err.FollowedBy(update_module.Cleanup());
-		err = err.FollowedBy(RemoveStateData(main_context.GetMenderStoreDB()));
 		return {Result::FailedNothingDone, err};
 	}
+	state_machine.Run();
 
-	return {Result::Downloaded, error::NoError};
-}
-
-ResultAndError DoInstallState(
-	Context &context,
-	StateData &data,
-	update_module::UpdateModule &update_module) {
-	const auto &default_paths {main_context.GetConfig().paths};
-	events::EventLoop loop;
-	auto script_runner {executor::ScriptRunner(
-		loop,
-		chrono::seconds {main_context.GetConfig().state_script_timeout_seconds},
-		chrono::seconds {main_context.GetConfig().state_script_retry_interval_seconds},
-		chrono::seconds {main_context.GetConfig().state_script_retry_timeout_seconds},
-		default_paths.GetArtScriptsPath(),
-		default_paths.GetRootfsScriptsPath())};
-
-	// Install Enter
-	auto err = script_runner.RunScripts(executor::State::ArtifactInstall, executor::Action::Enter);
-	if (err != error::NoError) {
-		auto install_leave_error {
-			script_runner.RunScripts(executor::State::ArtifactInstall, executor::Action::Error)};
-		log::Error(
-			"Failure during Install Enter script execution: "
-			+ err.FollowedBy(install_leave_error).String());
-		return InstallationFailureHandler(main_context, data, update_module);
-	}
-
-	err = update_module.ArtifactInstall();
-	if (err != error::NoError) {
-		auto install_leave_error {
-			script_runner.RunScripts(executor::State::ArtifactInstall, executor::Action::Error)};
-		log::Error("Installation failed: " + err.FollowedBy(install_leave_error).String());
-		return InstallationFailureHandler(main_context, data, update_module);
-	}
-
-	// Install Leave
-	err = script_runner.RunScripts(executor::State::ArtifactInstall, executor::Action::Leave);
-	if (err != error::NoError) {
-		auto install_leave_error {
-			script_runner.RunScripts(executor::State::ArtifactInstall, executor::Action::Error)};
-
-		log::Error(
-			"Failure during Install Leave script execution: "
-			+ err.FollowedBy(install_leave_error).String());
-
-		return InstallationFailureHandler(main_context, data, update_module);
-	}
-
-	auto reboot = update_module.NeedsReboot();
-	if (!reboot) {
-		log::Error("Could not query for reboot: " + reboot.error().String());
-		return InstallationFailureHandler(main_context, data, update_module);
-	}
-
-	auto rollback_support = update_module.SupportsRollback();
-	if (!rollback_support) {
-		log::Error("Could not query for rollback support: " + rollback_support.error().String());
-		return InstallationFailureHandler(main_context, data, update_module);
-	}
-
-	if (rollback_support.value()) {
-		if (reboot.value() != update_module::RebootAction::No) {
-			return {Result::InstalledRebootRequired, error::NoError};
-		} else {
-			return {Result::Installed, error::NoError};
-		}
-	}
-
-	cout << "Update Module doesn't support rollback. Committing immediately." << endl;
-
-	auto result = DoCommit(main_context, data, update_module);
-	if (result.result == Result::Committed) {
-		if (reboot.value() != update_module::RebootAction::No) {
-			result.result = Result::InstalledAndCommittedRebootRequired;
-		} else {
-			result.result = Result::InstalledAndCommitted;
-		}
-	}
-	return result;
-}
-
-ResultAndError DoCommit(
-	Context &context,
-	StateData &data,
-	update_module::UpdateModule &update_module) {
-	const auto &default_paths {main_context.GetConfig().paths};
-	events::EventLoop loop;
-	auto script_runner {executor::ScriptRunner(
-		loop,
-		chrono::seconds {main_context.GetConfig().state_script_timeout_seconds},
-		chrono::seconds {main_context.GetConfig().state_script_retry_interval_seconds},
-		chrono::seconds {main_context.GetConfig().state_script_retry_timeout_seconds},
-		default_paths.GetArtScriptsPath(),
-		default_paths.GetRootfsScriptsPath())};
-	// Commit Enter
-	auto err = script_runner.RunScripts(executor::State::ArtifactCommit, executor::Action::Enter);
-	if (err != error::NoError) {
-		log::Error("Commit Enter State Script error: " + err.String());
-		// Commit Error
-		auto commit_error =
-			script_runner.RunScripts(executor::State::ArtifactCommit, executor::Action::Error);
-		if (commit_error != error::NoError) {
-			log::Error("Commit Error State Script error: " + commit_error.String());
-		}
-		return InstallationFailureHandler(main_context, data, update_module);
-	}
-
-	err = update_module.ArtifactCommit();
-	if (err != error::NoError) {
-		log::Error("Commit failed: " + err.String());
-		// Commit Error
-		auto commit_error =
-			script_runner.RunScripts(executor::State::ArtifactCommit, executor::Action::Error);
-		if (commit_error != error::NoError) {
-			log::Error("Commit Error State Script error: " + commit_error.String());
-		}
-		return InstallationFailureHandler(main_context, data, update_module);
-	}
-
-	auto result = Result::Committed;
-	error::Error return_err;
-
-	// Commit Leave
-	err = script_runner.RunScripts(executor::State::ArtifactCommit, executor::Action::Leave);
-	if (err != error::NoError) {
-		auto leave_err =
-			script_runner.RunScripts(executor::State::ArtifactCommit, executor::Action::Error);
-		log::Error("Error during Commit Leave script: " + err.FollowedBy(leave_err).String());
-		result = Result::InstalledButFailedInPostCommit;
-		return_err = err.FollowedBy(leave_err);
-	}
-
-
-	err = update_module.Cleanup();
-	if (err != error::NoError) {
-		result = Result::InstalledButFailedInPostCommit;
-		return_err = return_err.FollowedBy(err);
-	}
-
-	err = main_context.CommitArtifactData(
-		data.artifact_name,
-		data.artifact_group,
-		data.artifact_provides,
-		data.artifact_clears_provides,
-		[](database::Transaction &txn) {
-			return txn.Remove(context::MenderContext::standalone_state_key);
-		});
-	if (err != error::NoError) {
-		result = Result::InstalledButFailedInPostCommit;
-		return_err = return_err.FollowedBy(err);
-	}
-
-	return {result, return_err};
-}
-
-ResultAndError DoRollback(
-	Context &context,
-	StateData &data,
-	update_module::UpdateModule &update_module) {
-	auto exp_rollback_support = update_module.SupportsRollback();
-	if (!exp_rollback_support) {
-		return {Result::NoRollback, exp_rollback_support.error()};
-	}
-
-	if (exp_rollback_support.value()) {
-		auto default_paths {main_context.GetConfig().paths};
-		events::EventLoop loop;
-		auto script_runner {executor::ScriptRunner(
-			loop,
-			chrono::seconds {main_context.GetConfig().state_script_timeout_seconds},
-			chrono::seconds {main_context.GetConfig().state_script_retry_interval_seconds},
-			chrono::seconds {main_context.GetConfig().state_script_retry_timeout_seconds},
-			default_paths.GetArtScriptsPath(),
-			default_paths.GetRootfsScriptsPath())};
-
-		// Rollback Enter
-		auto err =
-			script_runner.RunScripts(executor::State::ArtifactRollback, executor::Action::Enter);
-		if (err != error::NoError) {
-			return {Result::RollbackFailed, err};
-		}
-		err = update_module.ArtifactRollback();
-		if (err != error::NoError) {
-			return {Result::RollbackFailed, err};
-		}
-		// Rollback Leave
-		err = script_runner.RunScripts(executor::State::ArtifactRollback, executor::Action::Leave);
-		if (err != error::NoError) {
-			return {Result::RollbackFailed, err};
-		}
-		return {Result::RolledBack, error::NoError};
-	} else {
-		return {Result::NoRollback, error::NoError};
-	}
-}
-
-ResultAndError DoEmptyPayloadArtifact(
-	Context &context, StateData &data, InstallOptions options) {
-	if (options != InstallOptions::NoStdout) {
-		cout << "Installing artifact..." << endl;
-		cout << "Artifact with empty payload. Committing immediately." << endl;
-	}
-
-	auto err = main_context.CommitArtifactData(
-		data.artifact_name,
-		data.artifact_group,
-		data.artifact_provides,
-		data.artifact_clears_provides,
-		[](database::Transaction &txn) { return error::NoError; });
-	if (err != error::NoError) {
-		return {Result::InstalledButFailedInPostCommit, err};
-	}
-	return {Result::InstalledAndCommitted, err};
-}
-
-ResultAndError InstallationFailureHandler(
-	Context &context,
-	StateData &data,
-	update_module::UpdateModule &update_module) {
-	error::Error err;
-
-	auto default_paths {main_context.GetConfig().paths};
-	events::EventLoop loop;
-	auto script_runner {executor::ScriptRunner(
-		loop,
-		chrono::seconds {main_context.GetConfig().state_script_timeout_seconds},
-		chrono::seconds {main_context.GetConfig().state_script_retry_interval_seconds},
-		chrono::seconds {main_context.GetConfig().state_script_retry_timeout_seconds},
-		default_paths.GetArtScriptsPath(),
-		default_paths.GetRootfsScriptsPath())};
-
-	auto result = DoRollback(main_context, data, update_module);
-	switch (result.result) {
-	case Result::RolledBack:
-		result.result = Result::FailedAndRolledBack;
-		break;
-	case Result::NoRollback:
-		result.result = Result::FailedAndNoRollback;
-		break;
-	case Result::RollbackFailed:
-		result.result = Result::FailedAndRollbackFailed;
-		break;
-	default:
-		// Should not happen.
-		assert(false);
-		return {
-			Result::FailedAndRollbackFailed,
-			error::MakeError(
-				error::ProgrammingError,
-				"Unexpected result in InstallationFailureHandler. This is a bug.")};
-	}
-
-	// Failure Enter
-	err = script_runner.RunScripts(
-		executor::State::ArtifactFailure, executor::Action::Enter, executor::OnError::Ignore);
-	if (err != error::NoError) {
-		log::Error("Failure during execution of ArtifactFailure Enter script: " + err.String());
-		result.result = Result::FailedAndRollbackFailed;
-		result.err = result.err.FollowedBy(err);
-	}
-
-	err = update_module.ArtifactFailure();
-	if (err != error::NoError) {
-		result.result = Result::FailedAndRollbackFailed;
-		result.err = result.err.FollowedBy(err);
-	}
-
-	// Failure Leave
-	err = script_runner.RunScripts(
-		executor::State::ArtifactFailure, executor::Action::Leave, executor::OnError::Ignore);
-	if (err != error::NoError) {
-		log::Error("Failure during execution of ArtifactFailure Enter script: " + err.String());
-		result.result = Result::FailedAndRollbackFailed;
-		result.err = result.err.FollowedBy(err);
-	}
-
-	err = update_module.Cleanup();
-	if (err != error::NoError) {
-		result.result = Result::FailedAndRollbackFailed;
-		result.err = result.err.FollowedBy(err);
-	}
-
-	if (result.result == Result::FailedAndRolledBack) {
-		err = RemoveStateData(main_context.GetMenderStoreDB());
-	} else {
-		err = CommitBrokenArtifact(main_context, data);
-	}
-	if (err != error::NoError) {
-		result.result = Result::FailedAndRollbackFailed;
-		result.err = result.err.FollowedBy(err);
-	}
-
-	return result;
-}
-
-error::Error CommitBrokenArtifact(context::MenderContext &main_context, StateData &data) {
-	data.artifact_name += main_context.broken_artifact_name_suffix;
-	if (data.artifact_provides) {
-		data.artifact_provides.value()["artifact_name"] = data.artifact_name;
-	}
-	return main_context.CommitArtifactData(
-		data.artifact_name,
-		data.artifact_group,
-		data.artifact_provides,
-		data.artifact_clears_provides,
-		[](database::Transaction &txn) {
-			return txn.Remove(context::MenderContext::standalone_state_key);
-		});
+	return context.result_and_error;
 }
 
 } // namespace standalone

@@ -41,20 +41,88 @@ static void UpdateResult(ResultAndError &result, const ResultAndError &update) {
 	result.result = update.result;
 }
 
-void Prepare() {
-	const auto &default_paths {main_context.GetConfig().paths};
-	ctx.script_runner = make_unique<executor::ScriptRunner>(
-		ctx.loop,
-		chrono::seconds {main_context.GetConfig().state_script_timeout_seconds},
-		chrono::seconds {main_context.GetConfig().state_script_retry_interval_seconds},
-		chrono::seconds {main_context.GetConfig().state_script_retry_timeout_seconds},
-		default_paths.GetArtScriptsPath(),
-		default_paths.GetRootfsScriptsPath());
+ResultAndError DoEmptyPayloadArtifact(
+	Context &context, StateData &data, InstallOptions options) {
+	if (options != InstallOptions::NoStdout) {
+		cout << "Installing artifact..." << endl;
+		cout << "Artifact with empty payload. Committing immediately." << endl;
+	}
+
+	auto err = main_context.CommitArtifactData(
+		data.artifact_name,
+		data.artifact_group,
+		data.artifact_provides,
+		data.artifact_clears_provides,
+		[](database::Transaction &txn) { return error::NoError; });
+	if (err != error::NoError) {
+		return {Result::InstalledButFailedInPostCommit, err};
+	}
+	return {Result::InstalledAndCommitted, err};
+}
+
+static io::ExpectedReaderPtr ReaderFromUrl(
+	events::EventLoop &loop, http::Client &http_client, const string &src) {
+	auto req = make_shared<http::OutgoingRequest>();
+	req->SetMethod(http::Method::GET);
+	auto err = req->SetAddress(src);
+	if (err != error::NoError) {
+		return expected::unexpected(err);
+	}
+	error::Error inner_err;
+	io::AsyncReaderPtr reader;
+	err = http_client.AsyncCall(
+		req,
+		[&loop, &inner_err, &reader](http::ExpectedIncomingResponsePtr exp_resp) {
+			// No matter what happens, we will want to stop the loop after the headers
+			// are received.
+			loop.Stop();
+
+			if (!exp_resp) {
+				inner_err = exp_resp.error();
+				return;
+			}
+
+			auto resp = exp_resp.value();
+
+			if (resp->GetStatusCode() != http::StatusOK) {
+				inner_err = context::MakeError(
+					context::UnexpectedHttpResponse,
+					to_string(resp->GetStatusCode()) + ": " + resp->GetStatusMessage());
+				return;
+			}
+
+			auto exp_reader = resp->MakeBodyAsyncReader();
+			if (!exp_reader) {
+				inner_err = exp_reader.error();
+				return;
+			}
+			reader = exp_reader.value();
+		},
+		[](http::ExpectedIncomingResponsePtr exp_resp) {
+			if (!exp_resp) {
+				log::Warning("While reading HTTP body: " + exp_resp.error().String());
+			}
+		});
+
+	// Loop until the headers are received. Then we return and let the reader drive the
+	// rest of the download.
+	loop.Run();
+
+	if (err != error::NoError) {
+		return expected::unexpected(err);
+	}
+
+	if (inner_err != error::NoError) {
+		return expected::unexpected(inner_err);
+	}
+
+	return make_shared<events::io::ReaderFromAsyncReader>(loop, reader);
 }
 
 error::Error DoDownloadState(
 	Context &ctx,
 	artifact::Artifact &artifact) {
+
 	auto payload = artifact.Next();
 	if (!payload) {
 		return {Result::FailedNothingDone, payload.error()};
@@ -107,22 +175,6 @@ error::Error DoDownloadState(
 }
 
 void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
-	auto exp_in_progress = LoadStateData(main_context.GetMenderStoreDB());
-	if (!exp_in_progress) {
-		return {Result::FailedNothingDone, exp_in_progress.error()};
-	}
-	auto &in_progress = exp_in_progress.value();
-
-	if (in_progress) {
-		ctx.result_and_error = {
-			Result::FailedNothingDone,
-			error::Error(
-				make_error_condition(errc::operation_in_progress),
-				"Update already in progress. Please commit or roll back first")};
-		poster.PostEvent(StateEvent::Failure);
-		return;
-	}
-
 	io::ReaderPtr artifact_reader;
 
 	shared_ptr<events::EventLoop> event_loop;
@@ -148,6 +200,10 @@ void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 		}
 		auto file_stream = make_shared<ifstream>(std::move(stream.value()));
 		artifact_reader = make_shared<io::StreamReader>(file_stream);
+	}
+
+	if (ctx.options != InstallOptions::NoStdout) {
+		cout << "Streaming artifact..." << endl;
 	}
 
 	string art_scripts_path = main_context.GetConfig().paths.GetArtScriptsPath();
@@ -242,6 +298,10 @@ void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 }
 
 void ArtifactInstallState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
+	if (ctx.options != InstallOptions::NoStdout) {
+		cout << "Installing artifact..." << endl;
+	}
+
 	auto err = ctx.update_module.ArtifactInstall();
 	if (err != error::NoError) {
 		log::Error("Installation failed: " + err.FollowedBy(install_leave_error).String());
@@ -348,6 +408,38 @@ void CleanupState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 			poster.PostEvent(StateEvent::Failure);
 			return;
 		}
+	}
+
+	auto &data = ctx.state_data;
+
+	error::Error err;
+	if (data.rolled_back) {
+		// Successful rollback.
+		err = db.Remove(context::MenderContext::standalone_state_key);
+	} else {
+		if (data.failed) {
+			// Unsuccessful rollback or missing rollback support.
+			data.artifact_name += ctx.main_context.broken_artifact_name_suffix;
+			if (data.artifact_provides) {
+				data.artifact_provides.value()["artifact_name"] = data.artifact_name;
+			}
+			// Fall through to success case.
+		}
+		// Commit artifact data and remove state data
+		err = main_context.CommitArtifactData(
+			data.artifact_name,
+			data.artifact_group,
+			data.artifact_provides,
+			data.artifact_clears_provides,
+			[](database::Transaction &txn) {
+				return txn.Remove(context::MenderContext::standalone_state_key);
+			});
+	}
+	if (err != error::NoError) {
+		err = err.WithContext("Error while updating database");
+		UpdateResult(ctx.result_and_error, {Result::RollbackFailed, err});
+		poster.PostEvent(StateEvent::Failure);
+		return;
 	}
 
 	poster.PostEvent(StateEvent::Success);

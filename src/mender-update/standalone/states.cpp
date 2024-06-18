@@ -21,6 +21,8 @@
 #include <common/log.hpp>
 #include <common/path.hpp>
 
+#include <mender-update/standalone.hpp>
+
 namespace mender {
 namespace update {
 namespace standalone {
@@ -45,6 +47,26 @@ static void UpdateResult(ResultAndError &result, const ResultAndError &update) {
 	}
 
 	result.result = result.result | update.result;
+}
+
+void StateDataSaveState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
+	ctx.state_data.in_state = state_;
+
+	if (ResultContains(ctx.result_and_error.result, Result::Failed)) {
+		ctx.state_data.failed = true;
+	}
+	if (ResultContains(ctx.result_and_error.result, Result::RolledBack)) {
+		ctx.state_data.rolled_back = true;
+	}
+
+	auto err = SaveStateData(ctx.main_context.GetMenderStoreDB(), ctx.state_data);
+	if (err != error::NoError) {
+		UpdateResult(ctx.result_and_error, {Result::Failed, err});
+		poster.PostEvent(StateEvent::Failure);
+		return;
+	}
+
+	poster.PostEvent(StateEvent::Success);
 }
 
 error::Error DoEmptyPayloadArtifact(Context &ctx) {
@@ -177,16 +199,12 @@ StateData StateDataFromPayloadHeaderView(const artifact::PayloadHeaderView &head
 }
 
 void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
-	shared_ptr<events::EventLoop> event_loop;
-	http::ClientPtr http_client;
-
 	auto &main_context = ctx.main_context;
 
 	if (ctx.artifact_src.find("http://") == 0 || ctx.artifact_src.find("https://") == 0) {
-		event_loop = make_shared<events::EventLoop>();
-		http_client =
-			make_shared<http::Client>(main_context.GetConfig().GetHttpClientConfig(), *event_loop);
-		auto reader = ReaderFromUrl(*event_loop, *http_client, ctx.artifact_src);
+		ctx.http_client =
+			make_shared<http::Client>(main_context.GetConfig().GetHttpClientConfig(), ctx.loop);
+		auto reader = ReaderFromUrl(ctx.loop, *ctx.http_client, ctx.artifact_src);
 		if (!reader) {
 			UpdateResult(ctx.result_and_error, {Result::Failed, reader.error()});
 			poster.PostEvent(StateEvent::Failure);
@@ -261,6 +279,10 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 
 	ctx.state_data = StateDataFromPayloadHeaderView(header);
 
+	if (ctx.options != InstallOptions::NoStdout) {
+		cout << "Installing artifact..." << endl;
+	}
+
 	auto exp_matches = main_context.MatchesArtifactDepends(header.header);
 	if (!exp_matches) {
 		UpdateResult(ctx.result_and_error, {Result::Failed, exp_matches.error()});
@@ -290,10 +312,6 @@ void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 }
 
 void ArtifactInstallState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
-	if (ctx.options != InstallOptions::NoStdout) {
-		cout << "Installing artifact..." << endl;
-	}
-
 	auto err = ctx.update_module->ArtifactInstall();
 	if (err != error::NoError) {
 		log::Error("Installation failed: " + err.String());

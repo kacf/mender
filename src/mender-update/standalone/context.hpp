@@ -20,6 +20,7 @@
 #include <common/error.hpp>
 #include <common/events.hpp>
 #include <common/expected.hpp>
+#include <common/http.hpp>
 #include <common/io.hpp>
 #include <common/optional.hpp>
 
@@ -36,6 +37,7 @@ using namespace std;
 namespace error = mender::common::error;
 namespace events = mender::common::events;
 namespace expected = mender::common::expected;
+namespace http = mender::common::http;
 namespace io = mender::common::io;
 
 namespace executor = mender::artifact::scripts::executor;
@@ -54,22 +56,13 @@ struct StateDataKeys {
 	static const string payload_types;
 
 	// Introduced in version 2, not valid in version 1.
-	static const string completed_state;
+
+	// This just uses the official user facing state names, with one special case for
+	// "ArtifactCommit_Leave".
+	static const string in_state;
+
 	static const string failed;
 	static const string rolled_back;
-};
-
-struct CompletedStates {
-	// We use the "leave" form just in case we make this more granular later.
-	static const string download_leave;
-	static const string artifact_install_leave;
-
-	// This state has two forms because the leave script needs to be rerun if interrupted.
-	static const string artifact_commit;
-	static const string artifact_commit_leave;
-
-	static const string artifact_rollback_leave;
-	static const string artifact_failure_leave;
 };
 
 struct StateData {
@@ -80,7 +73,7 @@ struct StateData {
 	optional<vector<string>> artifact_clears_provides;
 	vector<string> payload_types;
 
-	string completed_state;
+	string in_state;
 	bool failed {false};
 	bool rolled_back {false};
 };
@@ -145,6 +138,7 @@ struct Context {
 	unique_ptr<update_module::UpdateModule> update_module;
 	unique_ptr<executor::ScriptRunner> script_runner;
 
+	http::ClientPtr http_client;
 	io::ReaderPtr artifact_reader;
 	unique_ptr<artifact::Artifact> parser;
 

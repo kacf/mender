@@ -24,16 +24,9 @@ const string StateDataKeys::artifact_group {"ArtifactGroup"};
 const string StateDataKeys::artifact_provides {"ArtifactTypeInfoProvides"};
 const string StateDataKeys::artifact_clears_provides {"ArtifactClearsProvides"};
 const string StateDataKeys::payload_types {"PayloadTypes"};
-const string StateDataKeys::completed_state {"CompletedState"};
+const string StateDataKeys::in_state {"InState"};
 const string StateDataKeys::failed {"Failed"};
 const string StateDataKeys::rolled_back {"RolledBack"};
-
-const string CompletedStates::download_leave {"Download_Leave"};
-const string CompletedStates::artifact_install_leave {"ArtifactInstall_Leave"};
-const string CompletedStates::artifact_commit {"ArtifactCommit"};
-const string CompletedStates::artifact_commit_leave {"ArtifactCommit_Leave"};
-const string CompletedStates::artifact_rollback_leave {"ArtifactRollback_Leave"};
-const string CompletedStates::artifact_failure_leave {"ArtifactFailure_Leave"};
 
 } // namespace standalone
 } // namespace update

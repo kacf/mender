@@ -103,7 +103,7 @@ ExpectedOptionalStateData LoadStateData(database::KeyValueDatabase &db) {
 
 	if (dst.version == 1) {
 		// In version 1, if there is any data at all, it is equivalent to this:
-		dst.completed_state = CompletedStates::artifact_install_leave;
+		dst.in_state = "ArtifactCommit";
 		dst.failed = false;
 		dst.rolled_back = false;
 
@@ -115,11 +115,11 @@ ExpectedOptionalStateData LoadStateData(database::KeyValueDatabase &db) {
 		// code).
 		dst.version = context::MenderContext::standalone_data_version;
 	} else {
-		exp_string = json::Get<string>(json, keys.completed_state, json::MissingOk::No);
+		exp_string = json::Get<string>(json, keys.in_state, json::MissingOk::No);
 		if (!exp_string) {
 			return expected::unexpected(exp_string.error());
 		}
-		dst.completed_state = exp_string.value();
+		dst.in_state = exp_string.value();
 
 		auto exp_bool = json::Get<bool>(json, keys.failed, json::MissingOk::No);
 		if (!exp_bool) {
@@ -204,7 +204,7 @@ error::Error SaveStateData(database::KeyValueDatabase &db, const StateData &data
 		ss << "]";
 	}
 
-	ss << R"(,")" << keys.completed_state << R"(":")" << data.completed_state << R"(")";
+	ss << R"(,")" << keys.in_state << R"(":")" << data.in_state << R"(")";
 
 	ss << R"(,")" << keys.failed << R"(":)" << (data.failed ? "true" : "false");
 
@@ -227,16 +227,21 @@ StateMachine::StateMachine(Context &ctx) :
 	download_enter_state_ {executor::State::Download, executor::Action::Enter, executor::OnError::Fail, Result::Failed},
 	download_leave_state_ {executor::State::Download, executor::Action::Leave, executor::OnError::Fail, Result::Failed},
 	download_error_state_ {executor::State::Download, executor::Action::Error, executor::OnError::Ignore, Result::NoResult},
+	save_artifact_install_state_ {"ArtifactInstall"},
 	artifact_install_enter_state_ {executor::State::ArtifactInstall, executor::Action::Enter, executor::OnError::Fail, Result::Failed},
 	artifact_install_leave_state_ {executor::State::ArtifactInstall, executor::Action::Leave, executor::OnError::Fail, Result::Failed},
 	artifact_install_error_state_ {executor::State::ArtifactInstall, executor::Action::Error, executor::OnError::Ignore, Result::NoResult},
+	save_artifact_commit_state_ {"ArtifactCommit"},
 	artifact_commit_enter_state_ {executor::State::ArtifactCommit, executor::Action::Enter, executor::OnError::Fail, Result::Failed},
 	artifact_commit_leave_state_ {executor::State::ArtifactCommit, executor::Action::Leave, executor::OnError::Ignore, Result::Failed | Result::FailedInPostCommit},
 	artifact_commit_error_state_ {executor::State::ArtifactCommit, executor::Action::Error, executor::OnError::Ignore, Result::NoResult},
+	save_artifact_rollback_state_ {"ArtifactRollback"},
 	artifact_rollback_enter_state_ {executor::State::ArtifactRollback, executor::Action::Enter, executor::OnError::Ignore, Result::Failed | Result::RollbackFailed},
 	artifact_rollback_leave_state_ {executor::State::ArtifactRollback, executor::Action::Leave, executor::OnError::Ignore, Result::NoResult},
+	save_artifact_failure_state_ {"ArtifactFailure"},
 	artifact_failure_enter_state_ {executor::State::ArtifactFailure, executor::Action::Enter, executor::OnError::Ignore, Result::Failed | Result::RollbackFailed},
 	artifact_failure_leave_state_ {executor::State::ArtifactFailure, executor::Action::Leave, executor::OnError::Ignore, Result::NoResult},
+	save_cleanup_state_ {"Cleanup"},
 	exit_state_ {loop_},
 	state_machine_ {prepare_download_state_} {
 	using tf = common::state_machine::TransitionFlag;
@@ -254,11 +259,14 @@ StateMachine::StateMachine(Context &ctx) :
 	s.AddTransition(download_state_,                  se::Success,              download_leave_state_,            tf::Immediate);
 	s.AddTransition(download_state_,                  se::Failure,              download_error_state_,            tf::Immediate);
 
-	s.AddTransition(download_leave_state_,            se::Success,              artifact_install_enter_state_,    tf::Immediate);
+	s.AddTransition(download_leave_state_,            se::Success,              save_artifact_install_state_,     tf::Immediate);
 	s.AddTransition(download_leave_state_,            se::Failure,              download_error_state_,            tf::Immediate);
 
-	s.AddTransition(download_error_state_,            se::Success,              cleanup_state_,                   tf::Immediate);
-	s.AddTransition(download_error_state_,            se::Failure,              cleanup_state_,                   tf::Immediate);
+	s.AddTransition(download_error_state_,            se::Success,              save_cleanup_state_,              tf::Immediate);
+	s.AddTransition(download_error_state_,            se::Failure,              save_cleanup_state_,              tf::Immediate);
+
+	s.AddTransition(save_artifact_install_state_,     se::Success,              artifact_install_enter_state_,    tf::Immediate);
+	s.AddTransition(save_artifact_install_state_,     se::Failure,              save_cleanup_state_,              tf::Immediate);
 
 	s.AddTransition(artifact_install_enter_state_,    se::Success,              artifact_install_state_,          tf::Immediate);
 	s.AddTransition(artifact_install_enter_state_,    se::Failure,              artifact_install_error_state_,    tf::Immediate);
@@ -272,9 +280,12 @@ StateMachine::StateMachine(Context &ctx) :
 	s.AddTransition(artifact_install_error_state_,    se::Success,              rollback_query_state_,            tf::Immediate);
 	s.AddTransition(artifact_install_error_state_,    se::Failure,              rollback_query_state_,            tf::Immediate);
 
-	s.AddTransition(reboot_and_rollback_query_state_, se::Success,              artifact_commit_enter_state_,     tf::Immediate);
+	s.AddTransition(reboot_and_rollback_query_state_, se::Success,              save_artifact_commit_state_,      tf::Immediate);
 	s.AddTransition(reboot_and_rollback_query_state_, se::Failure,              rollback_query_state_,            tf::Immediate);
 	s.AddTransition(reboot_and_rollback_query_state_, se::NeedsInteraction,     exit_state_,                      tf::Immediate);
+
+	s.AddTransition(save_artifact_commit_state_,      se::Success,              artifact_commit_enter_state_,     tf::Immediate);
+	s.AddTransition(save_artifact_commit_state_,      se::Failure,              artifact_commit_enter_state_,     tf::Immediate);
 
 	s.AddTransition(artifact_commit_enter_state_,     se::Success,              artifact_commit_state_,           tf::Immediate);
 	s.AddTransition(artifact_commit_enter_state_,     se::Failure,              artifact_commit_error_state_,     tf::Immediate);
@@ -282,15 +293,18 @@ StateMachine::StateMachine(Context &ctx) :
 	s.AddTransition(artifact_commit_state_,           se::Success,              artifact_commit_leave_state_,     tf::Immediate);
 	s.AddTransition(artifact_commit_state_,           se::Failure,              artifact_commit_error_state_,     tf::Immediate);
 
-	s.AddTransition(artifact_commit_leave_state_,     se::Success,              cleanup_state_,                   tf::Immediate);
-	s.AddTransition(artifact_commit_leave_state_,     se::Failure,              cleanup_state_,                   tf::Immediate);
+	s.AddTransition(artifact_commit_leave_state_,     se::Success,              save_cleanup_state_,              tf::Immediate);
+	s.AddTransition(artifact_commit_leave_state_,     se::Failure,              save_cleanup_state_,              tf::Immediate);
 
-	s.AddTransition(rollback_query_state_,            se::Success,              artifact_rollback_enter_state_,   tf::Immediate);
-	s.AddTransition(rollback_query_state_,            se::NothingToDo,          artifact_failure_enter_state_,    tf::Immediate);
-	s.AddTransition(rollback_query_state_,            se::Failure,              artifact_failure_enter_state_,    tf::Immediate);
+	s.AddTransition(rollback_query_state_,            se::Success,              save_artifact_rollback_state_,    tf::Immediate);
+	s.AddTransition(rollback_query_state_,            se::NothingToDo,          save_artifact_failure_state_,     tf::Immediate);
+	s.AddTransition(rollback_query_state_,            se::Failure,              save_artifact_failure_state_,     tf::Immediate);
 
 	s.AddTransition(artifact_commit_error_state_,     se::Success,              rollback_query_state_,            tf::Immediate);
 	s.AddTransition(artifact_commit_error_state_,     se::Failure,              rollback_query_state_,            tf::Immediate);
+
+	s.AddTransition(save_artifact_rollback_state_,    se::Success,              artifact_rollback_enter_state_,   tf::Immediate);
+	s.AddTransition(save_artifact_rollback_state_,    se::Failure,              artifact_rollback_enter_state_,   tf::Immediate);
 
 	s.AddTransition(artifact_rollback_enter_state_,   se::Success,              artifact_rollback_state_,         tf::Immediate);
 	s.AddTransition(artifact_rollback_enter_state_,   se::Failure,              artifact_rollback_state_,         tf::Immediate);
@@ -298,8 +312,11 @@ StateMachine::StateMachine(Context &ctx) :
 	s.AddTransition(artifact_rollback_state_,         se::Success,              artifact_rollback_leave_state_,   tf::Immediate);
 	s.AddTransition(artifact_rollback_state_,         se::Failure,              artifact_rollback_leave_state_,   tf::Immediate);
 
-	s.AddTransition(artifact_rollback_leave_state_,   se::Success,              artifact_failure_enter_state_,    tf::Immediate);
-	s.AddTransition(artifact_rollback_leave_state_,   se::Failure,              artifact_failure_enter_state_,    tf::Immediate);
+	s.AddTransition(artifact_rollback_leave_state_,   se::Success,              save_artifact_failure_state_,     tf::Immediate);
+	s.AddTransition(artifact_rollback_leave_state_,   se::Failure,              save_artifact_failure_state_,     tf::Immediate);
+
+	s.AddTransition(save_artifact_failure_state_,     se::Success,              artifact_failure_enter_state_,    tf::Immediate);
+	s.AddTransition(save_artifact_failure_state_,     se::Failure,              artifact_failure_enter_state_,    tf::Immediate);
 
 	s.AddTransition(artifact_failure_enter_state_,    se::Success,              artifact_failure_state_,          tf::Immediate);
 	s.AddTransition(artifact_failure_enter_state_,    se::Failure,              artifact_failure_state_,          tf::Immediate);
@@ -307,8 +324,11 @@ StateMachine::StateMachine(Context &ctx) :
 	s.AddTransition(artifact_failure_state_,          se::Success,              artifact_failure_leave_state_,    tf::Immediate);
 	s.AddTransition(artifact_failure_state_,          se::Failure,              artifact_failure_leave_state_,    tf::Immediate);
 
-	s.AddTransition(artifact_failure_leave_state_,    se::Success,              cleanup_state_,                   tf::Immediate);
-	s.AddTransition(artifact_failure_leave_state_,    se::Failure,              cleanup_state_,                   tf::Immediate);
+	s.AddTransition(artifact_failure_leave_state_,    se::Success,              save_cleanup_state_,              tf::Immediate);
+	s.AddTransition(artifact_failure_leave_state_,    se::Failure,              save_cleanup_state_,              tf::Immediate);
+
+	s.AddTransition(save_cleanup_state_,              se::Success,              cleanup_state_,                   tf::Immediate);
+	s.AddTransition(save_cleanup_state_,              se::Failure,              cleanup_state_,                   tf::Immediate);
 
 	s.AddTransition(cleanup_state_,                   se::Success,              exit_state_,                      tf::Immediate);
 	s.AddTransition(cleanup_state_,                   se::Failure,              exit_state_,                      tf::Immediate);
@@ -323,21 +343,21 @@ void StateMachine::Run() {
 	loop_.Run();
 }
 
-error::Error StateMachine::SetStartStateFromLastCompleted(const string &completed_state) {
-	if (completed_state == CompletedStates::download_leave) {
+error::Error StateMachine::SetStartStateFromStateData(const string &in_state) {
+	if (in_state == "ArtifactInstall") {
 		start_state_ = &artifact_install_enter_state_;
-	} else if (completed_state == CompletedStates::artifact_install_leave) {
+	} else if (in_state == "ArtifactCommit") {
 		start_state_ = &artifact_commit_enter_state_;
-	} else if (completed_state == CompletedStates::artifact_commit) {
+	} else if (in_state == "ArtifactCommit_Leave") {
 		start_state_ = &artifact_commit_leave_state_;
-	} else if (completed_state == CompletedStates::artifact_commit_leave) {
+	} else if (in_state == "Cleanup") {
 		start_state_ = &cleanup_state_;
-	} else if (completed_state == CompletedStates::artifact_rollback_leave) {
+	} else if (in_state == "ArtifactRollback") {
+		start_state_ = &artifact_rollback_enter_state_;
+	} else if (in_state == "ArtifactFailure") {
 		start_state_ = &artifact_failure_enter_state_;
-	} else if (completed_state == CompletedStates::artifact_failure_leave) {
-		start_state_ = &cleanup_state_;
 	} else {
-		return context::MakeError(context::DatabaseValueError, "Invalid CompletedState in database " + completed_state);
+		return context::MakeError(context::DatabaseValueError, "Invalid CompletedState in database " + in_state);
 	}
 
 	return error::NoError;
@@ -428,7 +448,7 @@ ResultAndError Resume(Context &context) {
 	}
 
 	StateMachine state_machine {context};
-	err = state_machine.SetStartStateFromLastCompleted(context.state_data.completed_state);
+	err = state_machine.SetStartStateFromStateData(context.state_data.in_state);
 	if (err != error::NoError) {
 		return {Result::Failed, err};
 	}
@@ -451,7 +471,7 @@ ResultAndError Commit(Context &context) {
 	}
 	auto &data = in_progress.value();
 
-	if (data.completed_state != CompletedStates::artifact_install_leave) {
+	if (data.in_state != "ArtifactCommit") {
 		return {Result::Failed, context::MakeError(context::WrongOperationError,
 			"Cannot commit from this state. "
 			"Make sure that the `install` command has run successfully and the device is expecting a commit.")};
@@ -468,7 +488,7 @@ ResultAndError Commit(Context &context) {
 	}
 
 	StateMachine state_machine {context};
-	err = state_machine.SetStartStateFromLastCompleted(data.completed_state);
+	err = state_machine.SetStartStateFromStateData(data.in_state);
 	if (err != error::NoError) {
 		return {Result::Failed, err};
 	}
@@ -497,7 +517,7 @@ ResultAndError Rollback(Context &context) {
 	}
 	auto &data = in_progress.value();
 
-	if (data.completed_state != CompletedStates::artifact_install_leave) {
+	if (data.in_state != "ArtifactCommit") {
 		return {Result::Failed, context::MakeError(context::WrongOperationError,
 			"Cannot commit from this state. "
 			"Make sure that the `install` command has run successfully and the device is expecting a commit.")};
@@ -514,7 +534,7 @@ ResultAndError Rollback(Context &context) {
 	}
 
 	StateMachine state_machine {context};
-	err = state_machine.SetStartStateFromLastCompleted(data.completed_state);
+	err = state_machine.SetStartStateFromStateData(data.in_state);
 	if (err != error::NoError) {
 		return {Result::Failed, err};
 	}

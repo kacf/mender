@@ -93,7 +93,9 @@ enum class Result {
 	FailedInPostCommit = 0x40,
 	NoRollback = 0x80,
 	RolledBack = 0x100,
-	RollbackFailed = 0x200,
+	NoRollbackNecessary = 0x200,
+	RollbackFailed = 0x400,
+	CleanupFailed = 0x800,
 };
 
 // enum classes cannot ordinarily be used as bit flags, but let's provide some convenience functions

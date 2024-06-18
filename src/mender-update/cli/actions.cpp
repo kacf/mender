@@ -159,25 +159,27 @@ static error::Error ResultHandler(standalone::ResultAndError result) {
 
 	// This tries to capture all things that can happen in a run, but there is a catchall in
 	// case we don't.
-	if (ResultIs(result.result, Result::Failed)) {
+	if (ResultContains(result.result, Result::Failed | Result::NoRollbackNecessary)) {
 		cout << "Installation failed. System not modified." << endl;
 	} else if (ResultContains(result.result, Result::Failed)) {
 		if (ResultContains(result.result, Result::FailedInPostCommit)) {
 			cout << "Installed, but one or more post-commit steps failed." << endl;
-		} else if (ResultContains(result.result, Result::Installed | Result::NoRollback)) {
+		} else if (ResultContains(result.result, Result::Downloaded | Result::NoRollback) or ResultContains(result.result, Result::Installed | Result::NoRollback)) {
 			cout
 				<< "Installation failed, and Update Module does not support rollback. System may be in an inconsistent state."
 				<< endl;
 		} else if (ResultContains(result.result, Result::NoRollback)) {
 			cout << "Update Module does not support rollback." << endl;
-		} else if (ResultContains(result.result, Result::Installed | Result::RolledBack)) {
-			cout << "Installation failed. Rolled back modifications." << endl;
-		} else if (ResultContains(result.result, Result::Installed | Result::RollbackFailed)) {
+		} else if (ResultContains(result.result, Result::Downloaded | Result::RollbackFailed) or ResultContains(result.result, Result::Installed | Result::RollbackFailed)) {
 			cout
 				<< "Installation failed, and rollback also failed. System may be in an inconsistent state."
 				<< endl;
+		} else if (ResultContains(result.result, Result::Downloaded | Result::RolledBack) or ResultContains(result.result, Result::Installed | Result::RolledBack)) {
+			cout << "Installation failed. Rolled back modifications." << endl;
 		} else if (ResultContains(result.result, Result::RollbackFailed)) {
 			cout << "Rollback failed. System may be in an inconsistent state." << endl;
+		} else if (ResultContains(result.result, Result::CleanupFailed)) {
+			cout << "Installed, but one or more post-commit steps failed." << endl;
 		} else {
 			log::Error("Unexpected result value: 0x" + (stringstream() << std::hex << static_cast<int>(result.result)).str());
 		}

@@ -65,6 +65,7 @@ public:
 	StateMachine(Context &ctx);
 
 	error::Error SetStartStateFromStateData(const string &completed_state);
+	void StartOnRollback();
 
 	void Run();
 
@@ -94,6 +95,7 @@ private:
 	StateDataSaveState save_artifact_commit_state_;
 	ScriptRunnerState artifact_commit_enter_state_;
 	ArtifactCommitState artifact_commit_state_;
+	StateDataSaveState save_artifact_commit_leave_state_;
 	ScriptRunnerState artifact_commit_leave_state_;
 	ScriptRunnerState artifact_commit_error_state_;
 
@@ -118,14 +120,14 @@ private:
 };
 
 ResultAndError Install(
-	standalone::Context &main_context,
+	standalone::Context &ctx,
 	const string &src,
 	artifact::config::Signature verify_signature = artifact::config::Signature::Verify,
 	InstallOptions options = InstallOptions::None);
 
-ResultAndError Resume(Context &context);
-ResultAndError Commit(Context &context);
-ResultAndError Rollback(Context &context);
+ResultAndError Resume(Context &ctx);
+ResultAndError Commit(Context &ctx);
+ResultAndError Rollback(Context &ctx);
 
 ResultAndError DoDownloadState(
 	Context &context,

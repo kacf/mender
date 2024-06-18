@@ -848,6 +848,7 @@ NeedsArtifactReboot
 SupportsRollback
 SupportsRollback
 ArtifactRollback
+ArtifactFailure
 Cleanup
 )"));
 
@@ -903,7 +904,7 @@ Installation failed. Rolled back modifications.
 )");
 		EXPECT_TRUE(VerifyOnlyMessages(
 			output.GetCerr(),
-			{"Installation failed: Process returned non-zero exit status: ArtifactInstall: Process exited with status 1"}));
+			{"Process returned non-zero exit status: ArtifactInstall: Process exited with status 1"}));
 	}
 
 	EXPECT_TRUE(mtesting::FileContainsExactly(
@@ -1539,6 +1540,7 @@ NeedsArtifactReboot
 SupportsRollback
 SupportsRollback
 ArtifactRollback
+ArtifactFailure
 Cleanup
 )"));
 
@@ -1623,7 +1625,7 @@ Cleanup
 
 	EXPECT_TRUE(VerifyProvides(tmpdir.Path(), R"(rootfs-image.version=test
 rootfs-image.checksum=f2ca1bb6c7e907d06dafe4687e579fce76b37e4e93b7605022da52e6ccc26fd2
-artifact_name=test
+artifact_name=test_INCONSISTENT
 )"));
 }
 
@@ -1988,6 +1990,7 @@ NeedsArtifactReboot
 SupportsRollback
 SupportsRollback
 ArtifactRollback
+ArtifactFailure
 Cleanup
 )"));
 

@@ -55,8 +55,11 @@ void StateDataSaveState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &post
 	if (ResultContains(ctx.result_and_error.result, Result::Failed)) {
 		ctx.state_data.failed = true;
 	}
-	if (ResultContains(ctx.result_and_error.result, Result::RolledBack)) {
+	if (ResultContains(ctx.result_and_error.result, Result::RolledBack) or ResultContains(ctx.result_and_error.result, Result::NoRollbackNecessary)) {
 		ctx.state_data.rolled_back = true;
+	}
+	if (ResultContains(ctx.result_and_error.result, Result::RollbackFailed)) {
+		ctx.state_data.rolled_back = false;
 	}
 
 	auto err = SaveStateData(ctx.main_context.GetMenderStoreDB(), ctx.state_data);
@@ -206,7 +209,7 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 			make_shared<http::Client>(main_context.GetConfig().GetHttpClientConfig(), ctx.loop);
 		auto reader = ReaderFromUrl(ctx.loop, *ctx.http_client, ctx.artifact_src);
 		if (!reader) {
-			UpdateResult(ctx.result_and_error, {Result::Failed, reader.error()});
+			UpdateResult(ctx.result_and_error, {Result::Failed | Result::NoRollbackNecessary, reader.error()});
 			poster.PostEvent(StateEvent::Failure);
 			return;
 		}
@@ -214,7 +217,7 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 	} else {
 		auto stream = io::OpenIfstream(ctx.artifact_src);
 		if (!stream) {
-			UpdateResult(ctx.result_and_error, {Result::Failed, stream.error()});
+			UpdateResult(ctx.result_and_error, {Result::Failed | Result::NoRollbackNecessary, stream.error()});
 			poster.PostEvent(StateEvent::Failure);
 			return;
 		}
@@ -227,7 +230,7 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 	// Clear the artifact scripts directory so we don't risk old scripts lingering.
 	auto err = path::DeleteRecursively(art_scripts_path);
 	if (err != error::NoError) {
-		UpdateResult(ctx.result_and_error, {Result::Failed, err.WithContext("When preparing to parse artifact")});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::NoRollbackNecessary, err.WithContext("When preparing to parse artifact")});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
@@ -241,7 +244,7 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 
 	auto exp_parser = artifact::Parse(*ctx.artifact_reader, config);
 	if (!exp_parser) {
-		UpdateResult(ctx.result_and_error, {Result::Failed, exp_parser.error()});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::NoRollbackNecessary, exp_parser.error()});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
@@ -249,7 +252,7 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 
 	auto exp_header = artifact::View(*ctx.parser, 0);
 	if (!exp_header) {
-		UpdateResult(ctx.result_and_error, {Result::Failed, exp_header.error()});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::NoRollbackNecessary, exp_header.error()});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
@@ -272,7 +275,7 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 
 	err = ctx.update_module->CleanAndPrepareFileTree(ctx.update_module->GetUpdateModuleWorkDir(), header);
 	if (err != error::NoError) {
-		UpdateResult(ctx.result_and_error, {Result::Failed, err});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::NoRollbackNecessary, err});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
@@ -285,12 +288,12 @@ void PrepareDownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 
 	auto exp_matches = main_context.MatchesArtifactDepends(header.header);
 	if (!exp_matches) {
-		UpdateResult(ctx.result_and_error, {Result::Failed, exp_matches.error()});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::NoRollbackNecessary, exp_matches.error()});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	} else if (!exp_matches.value()) {
 		// reasons already logged
-		UpdateResult(ctx.result_and_error, {Result::Failed, error::NoError});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::NoRollbackNecessary, error::NoError});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
@@ -302,7 +305,7 @@ void DownloadState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 	auto err = DoDownloadState(ctx);
 	if (err != error::NoError) {
 		log::Error("Streaming failed: " + err.String());
-		UpdateResult(ctx.result_and_error, {Result::Failed, err});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::NoRollbackNecessary, err});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
@@ -333,6 +336,10 @@ void RebootAndRollbackQueryState::OnEnter(Context &ctx, sm::EventPoster<StateEve
 		return;
 	}
 
+	if (reboot.value() != update_module::RebootAction::No) {
+		UpdateResult(ctx.result_and_error, {Result::RebootRequired, error::NoError});
+	}
+
 	auto rollback_support = ctx.update_module->SupportsRollback();
 	if (!rollback_support) {
 		log::Error("Could not query for rollback support: " + rollback_support.error().String());
@@ -342,9 +349,6 @@ void RebootAndRollbackQueryState::OnEnter(Context &ctx, sm::EventPoster<StateEve
 	}
 
 	if (rollback_support.value()) {
-		if (reboot.value() != update_module::RebootAction::No) {
-			UpdateResult(ctx.result_and_error, {Result::RebootRequired, error::NoError});
-		}
 		poster.PostEvent(StateEvent::NeedsInteraction);
 		return;
 	}
@@ -370,14 +374,21 @@ void RollbackQueryState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &post
 	auto rollback_support = ctx.update_module->SupportsRollback();
 	if (!rollback_support) {
 		log::Error("Could not query for rollback support: " + rollback_support.error().String());
-		UpdateResult(ctx.result_and_error, {Result::RollbackFailed, rollback_support.error()});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::RollbackFailed, rollback_support.error()});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
 
 	if (not rollback_support.value()) {
-		UpdateResult(ctx.result_and_error, {Result::NoRollback, error::NoError});
-		poster.PostEvent(StateEvent::NothingToDo);
+		bool already_failed = ResultContains(ctx.result_and_error.result, Result::Failed);
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::NoRollback, error::NoError});
+		if (already_failed) {
+			poster.PostEvent(StateEvent::NothingToDo);
+		} else {
+			// If it hadn't failed already, it's because the user asked for the rollback
+			// explicitly. In this case bail out instead of continuing.
+			poster.PostEvent(StateEvent::NeedsInteraction);
+		}
 		return;
 	}
 
@@ -387,7 +398,7 @@ void RollbackQueryState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &post
 void ArtifactRollbackState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 	auto err = ctx.update_module->ArtifactRollback();
 	if (err != error::NoError) {
-		UpdateResult(ctx.result_and_error, {Result::RollbackFailed, err});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::RollbackFailed, err});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
@@ -399,7 +410,7 @@ void ArtifactRollbackState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &p
 void ArtifactFailureState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 	auto err = ctx.update_module->ArtifactFailure();
 	if (err != error::NoError) {
-		UpdateResult(ctx.result_and_error, {Result::RollbackFailed, err});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::RollbackFailed, err});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
@@ -408,17 +419,20 @@ void ArtifactFailureState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &po
 }
 
 void CleanupState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
+	auto final_event = StateEvent::Success;
+
+	auto &data = ctx.state_data;
+
 	// If this is null, then it is simply a no-op, the update did not even get started.
 	if (ctx.update_module != nullptr) {
 		auto err = ctx.update_module->Cleanup();
 		if (err != error::NoError) {
-			UpdateResult(ctx.result_and_error, {Result::RollbackFailed, err});
-			poster.PostEvent(StateEvent::Failure);
-			return;
+			UpdateResult(ctx.result_and_error, {Result::Failed | Result::CleanupFailed, err});
+			final_event = StateEvent::Failure;
+			data.failed = true;
+			// Fall through so that we update the DB.
 		}
 	}
-
-	auto &data = ctx.state_data;
 
 	error::Error err;
 	if (data.rolled_back) {
@@ -446,12 +460,12 @@ void CleanupState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
 	}
 	if (err != error::NoError) {
 		err = err.WithContext("Error while updating database");
-		UpdateResult(ctx.result_and_error, {Result::RollbackFailed, err});
+		UpdateResult(ctx.result_and_error, {Result::Failed | Result::RollbackFailed, err});
 		poster.PostEvent(StateEvent::Failure);
 		return;
 	}
 
-	poster.PostEvent(StateEvent::Success);
+	poster.PostEvent(final_event);
 }
 
 void ScriptRunnerState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {

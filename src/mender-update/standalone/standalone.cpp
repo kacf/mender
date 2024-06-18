@@ -368,6 +368,34 @@ error::Error StateMachine::SetStartStateFromStateData(const string &in_state) {
 	return error::NoError;
 }
 
+error::Error StateMachine::SetStopAfterState(const string &state) {
+	using tf = common::state_machine::TransitionFlag;
+	using se = StateEvent;
+	auto &s = state_machine_;
+
+	// Replace transition in state machine in order to exit at given point.
+	if (state == "Download") {
+		s.AddTransition(save_artifact_install_state_, se::Success, exit_state_, tf::Immediate);
+
+	} else if (state == "ArtifactInstall") {
+		s.AddTransition(save_artifact_commit_state_, se::Success, exit_state_, tf::Immediate);
+
+	} else if (state == "ArtifactCommit") {
+		s.AddTransition(save_cleanup_state_, se::Success, exit_state_, tf::Immediate);
+
+	} else if (state == "ArtifactRollback") {
+		s.AddTransition(save_artifact_failure_state_, se::Success, exit_state_, tf::Immediate);
+
+	} else if (state == "ArtifactFailure") {
+		s.AddTransition(save_cleanup_state_, se::Success, exit_state_, tf::Immediate);
+
+	} else {
+		return context::MakeError(context::ValueError, "Cannot stop after unknown state " + state);
+	}
+
+	return error::NoError;
+}
+
 void StateMachine::StartOnRollback() {
 	start_state_ = &rollback_query_state_;
 }
@@ -436,6 +464,7 @@ ResultAndError Install(
 	context.options = options;
 
 	StateMachine state_machine {context};
+
 	state_machine.Run();
 
 	return context.result_and_error;
@@ -465,10 +494,12 @@ ResultAndError Resume(Context &context) {
 	}
 
 	StateMachine state_machine {context};
+
 	err = state_machine.SetStartStateFromStateData(context.state_data.in_state);
 	if (err != error::NoError) {
 		return {Result::Failed, err};
 	}
+
 	state_machine.Run();
 
 	return context.result_and_error;
@@ -505,10 +536,12 @@ ResultAndError Commit(Context &ctx) {
 	}
 
 	StateMachine state_machine {ctx};
+
 	err = state_machine.SetStartStateFromStateData(ctx.state_data.in_state);
 	if (err != error::NoError) {
 		return {Result::Failed, err};
 	}
+
 	state_machine.Run();
 
 	return ctx.result_and_error;

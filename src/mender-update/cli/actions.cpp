@@ -228,6 +228,7 @@ error::Error InstallAction::Execute(context::MenderContext &main_context) {
 	}
 	events::EventLoop loop;
 	standalone::Context ctx {main_context, loop};
+	ctx.stop_after = std::move(stop_after_);
 	auto result = standalone::Install(ctx, src_);
 	err = ResultHandler(result);
 	if (!reboot_exit_code_

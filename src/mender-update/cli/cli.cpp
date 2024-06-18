@@ -59,7 +59,15 @@ const conf::CliCommand cmd_install {
 			conf::CliOption {
 				.long_option = "reboot-exit-code",
 				.description =
-					"Return exit code 4 if a manual reboot is required after the Artifact installation",
+					"Return exit code 4 if a manual reboot is required after the Artifact installation.",
+			},
+			conf::CliOption {
+				.long_option = "stop-after",
+				.description =
+					"Stop after the given state has completed. "
+				"State names are the ones used by update modules. "
+				"You can later resume the installation by using the `resume` command. "
+				"Note that the client always stops before committing if the update module supports rollback.",
 			},
 		},
 };
@@ -131,42 +139,6 @@ ExpectedActionPtr ParseUpdateArguments(
 		}
 
 		return make_shared<ShowProvidesAction>();
-	} else if (start[0] == "stream") {
-		conf::CmdlineOptionsIterator iter(
-			start + 1, end, {}, conf::CommandOptsSetWithoutValue(cmd_install.options));
-		iter.SetArgumentsMode(conf::ArgumentsMode::AcceptBareArguments);
-
-		string filename;
-		while (true) {
-			auto arg = iter.Next();
-			if (!arg) {
-				return expected::unexpected(arg.error());
-			}
-
-			auto value = arg.value();
-			if (value.option != "") {
-				return expected::unexpected(
-					conf::MakeError(conf::InvalidOptionsError, "No such option: " + value.option));
-			}
-
-			if (value.value != "") {
-				if (filename != "") {
-					return expected::unexpected(conf::MakeError(
-						conf::InvalidOptionsError, "Too many arguments: " + value.value));
-				} else {
-					filename = value.value;
-				}
-			} else {
-				if (filename == "") {
-					return expected::unexpected(
-						conf::MakeError(conf::InvalidOptionsError, "Need a path to an artifact"));
-				} else {
-					break;
-				}
-			}
-		}
-
-		return make_shared<StreamAction>(filename);
 	} else if (start[0] == "install") {
 		conf::CmdlineOptionsIterator iter(
 			start + 1, end, {}, conf::CommandOptsSetWithoutValue(cmd_install.options));
@@ -174,6 +146,7 @@ ExpectedActionPtr ParseUpdateArguments(
 
 		string filename;
 		bool reboot_exit_code = false;
+		string stop_after;
 		while (true) {
 			auto arg = iter.Next();
 			if (!arg) {
@@ -183,6 +156,12 @@ ExpectedActionPtr ParseUpdateArguments(
 			auto value = arg.value();
 			if (value.option == "--reboot-exit-code") {
 				reboot_exit_code = true;
+				continue;
+			} else if (value.option == "--stop-after") {
+				if (value.value == "") {
+					return expected::unexpected(conf::MakeError(conf::InvalidOptionsError, "--stop-after needs an argument"));
+				}
+				stop_after = value.value;
 				continue;
 			} else if (value.option != "") {
 				return expected::unexpected(
@@ -206,7 +185,10 @@ ExpectedActionPtr ParseUpdateArguments(
 			}
 		}
 
-		return make_shared<InstallAction>(filename, reboot_exit_code);
+		auto install_action = make_shared<InstallAction>(filename);
+		install_action->SetRebootExitCode(reboot_exit_code);
+		install_action->SetStopAfter(stop_after);
+		return install_action;
 	} else if (start[0] == "commit") {
 		conf::CmdlineOptionsIterator iter(start + 1, end, {}, {});
 		auto arg = iter.Next();

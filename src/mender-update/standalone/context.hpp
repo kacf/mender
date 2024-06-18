@@ -135,6 +135,8 @@ struct Context {
 
 	StateData state_data;
 
+	string stop_after;
+
 	string artifact_src;
 
 	unique_ptr<update_module::UpdateModule> update_module;

@@ -64,16 +64,24 @@ private:
 
 class InstallAction : virtual public Action {
 public:
-	InstallAction(const string &src, bool reboot_exit_code) :
-		src_ {src},
-		reboot_exit_code_ {reboot_exit_code} {
+	InstallAction(const string &src) :
+		src_ {src} {
+	}
+
+	void SetRebootExitCode(bool val) {
+		reboot_exit_code_ = val;
+	}
+
+	void SetStopAfter(const string &val) {
+		stop_after_ = val;
 	}
 
 	error::Error Execute(context::MenderContext &main_context) override;
 
 private:
 	string src_;
-	bool reboot_exit_code_;
+	bool reboot_exit_code_ {false};
+	string stop_after_;
 };
 
 class CommitAction : virtual public Action {

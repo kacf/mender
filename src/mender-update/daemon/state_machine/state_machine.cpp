@@ -102,13 +102,16 @@ StateMachine::StateMachine(Context &ctx, events::EventLoop &event_loop) :
 
 	main_states_.AddTransition(poll_for_deployment_state_,              se::Success,                     ss.sync_leave_download_,                 tf::Immediate);
 	main_states_.AddTransition(poll_for_deployment_state_,              se::NothingToDo,                 ss.sync_leave_,                          tf::Immediate);
-	main_states_.AddTransition(poll_for_deployment_state_,              se::Failure,                     ss.sync_error_,                          tf::Immediate);
+	main_states_.AddTransition(poll_for_deployment_state_,              se::Failure,                     ss.sync_error_download_,                 tf::Immediate);
 
 	main_states_.AddTransition(ss.sync_leave_,                          se::Success,                     ss.idle_enter_,                          tf::Immediate);
 	main_states_.AddTransition(ss.sync_leave_,                          se::Failure,                     ss.sync_error_,                          tf::Immediate);
 
 	main_states_.AddTransition(ss.sync_leave_download_,                 se::Success,                     send_download_status_state_,             tf::Immediate);
 	main_states_.AddTransition(ss.sync_leave_download_,                 se::Failure,                     ss.sync_error_,                          tf::Immediate);
+
+	main_states_.AddTransition(ss.sync_error_download_,                 se::Success,                     end_of_deployment_state_,                tf::Immediate);
+	main_states_.AddTransition(ss.sync_error_download_,                 se::Failure,                     end_of_deployment_state_,                tf::Immediate);
 
 	// Cannot fail due to FailureMode::Ignore.
 	main_states_.AddTransition(send_download_status_state_,             se::Success,                     ss.download_enter_,                      tf::Immediate);

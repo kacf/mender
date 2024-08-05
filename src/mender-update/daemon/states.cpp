@@ -935,6 +935,18 @@ void StateLoopState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) 
 }
 
 void EndOfDeploymentState::OnEnter(Context &ctx, sm::EventPoster<StateEvent> &poster) {
+	// State data can either exist or not, in at least two ways:
+	//
+	// 1. If polling succeeded, but Sync_Leave failed, it will go through Sync_Error and end up here.
+	// 2. If polling failed, it will go straight through Sync_Error and end up here.
+	//
+	// Only in the former case does deployment data actually exist. If it doesn't, we can just
+	// move along, there is nothing to do.
+	if (not ctx.deployment.state_data) {
+		poster.PostEvent(StateEvent::Success);
+		return;
+	}
+
 	log::Info(
 		"Deployment with ID " + ctx.deployment.state_data->update_info.id
 		+ " finished with status: " + string(ctx.deployment.failed ? "Failure" : "Success"));

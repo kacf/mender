@@ -102,7 +102,7 @@ const conf::CliCommand cmd_install {
 };
 
 const conf::CliCommand cmd_resume {
-	.name = "install",
+	.name = "resume",
 	.description = "Resume an interrupted installation",
 	.options_w_values =
 		{

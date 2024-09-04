@@ -48,21 +48,19 @@ const conf::CliCommand cmd_check_update {
 };
 
 const conf::CliOption opt_stop_before {
-	conf::CliOption {
-		.long_option = "stop-before",
-		.description =
-			"Stop before entering the given state. "
-			"Choices are "
-			"`ArtifactInstall_Enter`, "
-			"`ArtifactCommit_Enter`, "
-			"`ArtifactCommit_Leave`, "
-			"`ArtifactRollback_Enter`, "
-			"`ArtifactFailure_Enter`, "
-			"and `Cleanup`. "
-			"You can later resume the installation by using the `resume` command. "
-			"Note that the client always stops after `ArtifactInstall` if the update module supports rollback.",
-		.parameter = "STATE",
-	},
+	.long_option = "stop-before",
+	.description =
+		"Stop before entering the given state. "
+		"Choices are "
+		"`ArtifactInstall_Enter`, "
+		"`ArtifactCommit_Enter`, "
+		"`ArtifactCommit_Leave`, "
+		"`ArtifactRollback_Enter`, "
+		"`ArtifactFailure_Enter`, "
+		"and `Cleanup`. "
+		"You can later resume the installation by using the `resume` command. "
+		"Note that the client always stops after `ArtifactInstall` if the update module supports rollback.",
+	.parameter = "STATE",
 };
 
 const conf::CliCommand cmd_commit {

@@ -68,7 +68,7 @@ const conf::CliOption opt_stop_before {
 const conf::CliCommand cmd_commit {
 	.name = "commit",
 	.description = "Commit current Artifact. Returns (2) if no update in progress",
-	.options_w_values =
+	.options =
 		{
 			opt_stop_before,
 		},
@@ -87,10 +87,6 @@ const conf::CliCommand cmd_install {
 			.name = "artifact",
 			.mandatory = true,
 		},
-	.options_w_values =
-		{
-			opt_stop_before,
-		},
 	.options =
 		{
 			conf::CliOption {
@@ -98,16 +94,13 @@ const conf::CliCommand cmd_install {
 				.description =
 					"Return exit code 4 if a manual reboot is required after the Artifact installation.",
 			},
+			opt_stop_before,
 		},
 };
 
 const conf::CliCommand cmd_resume {
 	.name = "resume",
 	.description = "Resume an interrupted installation",
-	.options_w_values =
-		{
-			opt_stop_before,
-		},
 	.options =
 		{
 			conf::CliOption {
@@ -115,13 +108,14 @@ const conf::CliCommand cmd_resume {
 				.description =
 					"Return exit code 4 if a manual reboot is required after the Artifact installation.",
 			},
+			opt_stop_before,
 		},
 };
 
 const conf::CliCommand cmd_rollback {
 	.name = "rollback",
 	.description = "Rollback current Artifact. Returns (2) if no update in progress",
-	.options_w_values =
+	.options =
 		{
 			opt_stop_before,
 		},
@@ -222,7 +216,7 @@ ExpectedActionPtr ParseUpdateArguments(
 	}
 
 	if (start[0] == "show-artifact") {
-		conf::CmdlineOptionsIterator iter(start + 1, end, {}, {});
+		conf::CmdlineOptionsIterator iter(start + 1, end, cmd_show_artifact.options);
 		auto arg = iter.Next();
 		if (!arg) {
 			return expected::unexpected(arg.error());
@@ -230,7 +224,7 @@ ExpectedActionPtr ParseUpdateArguments(
 
 		return make_shared<ShowArtifactAction>();
 	} else if (start[0] == "show-provides") {
-		conf::CmdlineOptionsIterator iter(start + 1, end, {}, {});
+		conf::CmdlineOptionsIterator iter(start + 1, end, cmd_show_provides.options);
 		auto arg = iter.Next();
 		if (!arg) {
 			return expected::unexpected(arg.error());
@@ -241,8 +235,7 @@ ExpectedActionPtr ParseUpdateArguments(
 		conf::CmdlineOptionsIterator iter(
 			start + 1,
 			end,
-			conf::CommandOptsSetWithValue(cmd_install.options_w_values),
-			conf::CommandOptsSetWithoutValue(cmd_install.options));
+			cmd_install.options);
 		iter.SetArgumentsMode(conf::ArgumentsMode::AcceptBareArguments);
 
 		string filename;
@@ -261,8 +254,7 @@ ExpectedActionPtr ParseUpdateArguments(
 		conf::CmdlineOptionsIterator iter(
 			start + 1,
 			end,
-			conf::CommandOptsSetWithValue(cmd_resume.options_w_values),
-			conf::CommandOptsSetWithoutValue(cmd_resume.options));
+			cmd_resume.options);
 
 		bool reboot_exit_code = false;
 		vector<string> stop_before;
@@ -277,7 +269,7 @@ ExpectedActionPtr ParseUpdateArguments(
 		return resume_action;
 	} else if (start[0] == "commit") {
 		conf::CmdlineOptionsIterator iter(
-			start + 1, end, conf::CommandOptsSetWithValue(cmd_commit.options_w_values), {});
+			start + 1, end, cmd_commit.options);
 
 		vector<string> stop_before;
 		auto err = CommonInstallFlagsHandler(iter, nullptr, nullptr, &stop_before);
@@ -290,7 +282,7 @@ ExpectedActionPtr ParseUpdateArguments(
 		return commit_action;
 	} else if (start[0] == "rollback") {
 		conf::CmdlineOptionsIterator iter(
-			start + 1, end, conf::CommandOptsSetWithValue(cmd_rollback.options_w_values), {});
+			start + 1, end, cmd_rollback.options);
 
 		vector<string> stop_before;
 		auto err = CommonInstallFlagsHandler(iter, nullptr, nullptr, &stop_before);
@@ -302,7 +294,7 @@ ExpectedActionPtr ParseUpdateArguments(
 		rollback_action->SetStopBefore(std::move(stop_before));
 		return rollback_action;
 	} else if (start[0] == "daemon") {
-		conf::CmdlineOptionsIterator iter(start + 1, end, {}, {});
+		conf::CmdlineOptionsIterator iter(start + 1, end, cmd_daemon.options);
 		auto arg = iter.Next();
 		if (!arg) {
 			return expected::unexpected(arg.error());
@@ -310,7 +302,7 @@ ExpectedActionPtr ParseUpdateArguments(
 
 		return make_shared<DaemonAction>();
 	} else if (start[0] == "send-inventory") {
-		conf::CmdlineOptionsIterator iter(start + 1, end, {}, {});
+		conf::CmdlineOptionsIterator iter(start + 1, end, cmd_send_inventory.options);
 		auto arg = iter.Next();
 		if (!arg) {
 			return expected::unexpected(arg.error());
@@ -318,7 +310,7 @@ ExpectedActionPtr ParseUpdateArguments(
 
 		return make_shared<SendInventoryAction>();
 	} else if (start[0] == "check-update") {
-		conf::CmdlineOptionsIterator iter(start + 1, end, {}, {});
+		conf::CmdlineOptionsIterator iter(start + 1, end, cmd_check_update.options);
 		auto arg = iter.Next();
 		if (!arg) {
 			return expected::unexpected(arg.error());

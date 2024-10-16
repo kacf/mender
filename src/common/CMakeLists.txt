@@ -39,7 +39,7 @@ endif()
 include(cmake/boost.cmake)
 
 add_library(common_cpp INTERFACE)
-target_compile_options(common_cpp INTERFACE -Werror -Wall -Wsuggest-override)
+target_compile_options(common_cpp INTERFACE -Werror -Wall -Wsuggest-override -Wconversion)
 target_include_directories(common_cpp SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/vendor/expected/include)
 target_include_directories(common_cpp SYSTEM INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/vendor/optional-lite/include)
 
